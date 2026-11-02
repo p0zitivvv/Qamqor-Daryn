@@ -2515,11 +2515,17 @@ const App = {
     this.state.currentScreen = screenId;
     ['screen-onboarding-connect', 'screen-onboarding-survey', 'screen-main-app'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.classList.add('hidden');
+      if (el) {
+        el.classList.add('hidden');
+        el.style.display = 'none';
+      }
     });
 
     const activeEl = document.getElementById(`screen-${screenId}`);
-    if (activeEl) activeEl.classList.remove('hidden');
+    if (activeEl) {
+      activeEl.classList.remove('hidden');
+      activeEl.style.display = '';
+    }
 
     if (screenId === 'onboarding-survey') {
       this.goToSurveyStep(this.state.currentSurveyStep || 1);
@@ -2541,9 +2547,13 @@ const App = {
   },
 
   startInstantDemo() {
+    if (!this.recommendationEngine) {
+      try { this.init(); } catch(e) {}
+    }
     this.state.isDemo = true;
     this.state.isConnected = false;
     StorageService.setDemoMode(true);
+    StorageService.setOnboarded(true);
     let profile = StorageService.getProfile();
     if (!profile) {
       profile = StorageService.getDefaultDemoProfile();
@@ -2605,11 +2615,13 @@ const App = {
     }
 
     if (data.rrIntervals && data.rrIntervals.length >= 5) {
-      import('./signals.js').then(({ calculateSDNN, calculateRhythmIrregularity }) => {
+      try {
         this.state.sdnn = calculateSDNN(data.rrIntervals);
         this.state.pIrr = calculateRhythmIrregularity(data.rrIntervals);
-        this.recalculateModel();
-      });
+      } catch(e) {
+        console.warn('SDNN/pIrr calculation error:', e);
+      }
+      this.recalculateModel();
     } else {
       this.recalculateModel();
     }

@@ -1050,7 +1050,7 @@
   <!-- ======================================================== -->
   <!-- JAVASCRIPT: SUPPORTS BOTH DIRECT FILE:// OPENING AND WEB HOSTING -->
   <!-- ======================================================== -->
-  <script src="./bundle.js?v=20261102_1710"></script>
+  <script src="./bundle.js?v=20261102_1725"></script>
 
 
   <!-- ======================================================== -->
@@ -1163,53 +1163,100 @@
     }
 
     function safeStartDemo() {
-      // Запуск демо-режима без зависимости от App
-      if (window.App && typeof window.App.startInstantDemo === 'function') {
-        try { window.App.startInstantDemo(); return; } catch(e) { console.error('startInstantDemo failed:', e); }
+      // 1. Немедленно сохраняем флаги демо-режима в localStorage
+      try {
+        localStorage.setItem('qamqor_demo_mode', 'true');
+        localStorage.setItem('qamqor_onboarded', 'true');
+        if (!localStorage.getItem('qamqor_user_profile')) {
+          localStorage.setItem('qamqor_user_profile', JSON.stringify({
+            name: window.surveyData && window.surveyData.name ? window.surveyData.name : 'Пользователь (Демо)',
+            age: window.surveyData && window.surveyData.age ? window.surveyData.age : 40,
+            gender: 'unspecified',
+            heightCm: window.surveyData && window.surveyData.heightCm ? window.surveyData.heightCm : 175,
+            weightKg: window.surveyData && window.surveyData.weightKg ? window.surveyData.weightKg : 75,
+            bmi: 24.5,
+            smoking: 0,
+            familyHistory: 0,
+            stress: 1,
+            activity: 1
+          }));
+        }
+      } catch(e) {}
+
+      // 2. Мгновенно переключаем экран в DOM на main-app
+      var cScreen = document.getElementById('screen-onboarding-connect');
+      var sScreen = document.getElementById('screen-onboarding-survey');
+      var mScreen = document.getElementById('screen-main-app');
+      if (cScreen) { cScreen.classList.add('hidden'); cScreen.style.display = 'none'; }
+      if (sScreen) { sScreen.classList.add('hidden'); sScreen.style.display = 'none'; }
+      if (mScreen) { mScreen.classList.remove('hidden'); mScreen.style.display = 'flex'; }
+
+      // 3. Вызываем App для полной активации модели и симулятора
+      if (window.App) {
+        try {
+          if (!window.App.recommendationEngine && typeof window.App.init === 'function') {
+            window.App.init();
+          }
+          if (typeof window.App.startInstantDemo === 'function') {
+            window.App.startInstantDemo();
+            return;
+          }
+        } catch(err) {
+          console.error('App.startInstantDemo error:', err);
+        }
       }
-      // Fallback: если App ещё не готов — подождём 300мс и попробуем снова
+
+      // Повторный вызов через 300 мс если скрипт bundle ещё инициализируется
       setTimeout(function() {
         if (window.App && typeof window.App.startInstantDemo === 'function') {
-          try { window.App.startInstantDemo(); }
-          catch(e) { alert('Не удалось запустить демо. Обновите страницу.'); }
-        } else {
-          alert('Приложение загружается. Попробуйте ещё раз через секунду.');
+          try { window.App.startInstantDemo(); } catch(e) {}
         }
-      }, 350);
+      }, 300);
     }
 
     function safeStartSurvey() {
+      var cScreen = document.getElementById('screen-onboarding-connect');
+      var sScreen = document.getElementById('screen-onboarding-survey');
+      if (cScreen) { cScreen.classList.add('hidden'); cScreen.style.display = 'none'; }
+      if (sScreen) { sScreen.classList.remove('hidden'); sScreen.style.display = 'flex'; }
+      switchSurveyPanel(1);
+
       if (window.App && typeof window.App.startSurveyWizard === 'function') {
-        try { window.App.startSurveyWizard(); return; } catch(e) {}
+        try { window.App.startSurveyWizard(); } catch(e) {}
       }
-      setTimeout(function() {
-        if (window.App && typeof window.App.startSurveyWizard === 'function') {
-          try { window.App.startSurveyWizard(); }
-          catch(e) { alert('Не удалось открыть анкету. Обновите страницу.'); }
-        } else {
-          alert('Приложение загружается. Попробуйте ещё раз через секунду.');
-        }
-      }, 350);
     }
 
     function safeStartDemoFromSurvey() {
-      if (window.App) {
-        try {
-          if (typeof window.App.startDemoMode === 'function') window.App.startDemoMode();
-          if (typeof window.App.updateSurveyDeviceStatus === 'function') window.App.updateSurveyDeviceStatus();
-          if (typeof window.App.showToast === 'function') window.App.showToast('Демо-режим включен', 'info');
-          return;
-        } catch(e) {}
-      }
-      setTimeout(function() {
-        try {
-          if (window.App) {
-            if (typeof window.App.startDemoMode === 'function') window.App.startDemoMode();
-            if (typeof window.App.updateSurveyDeviceStatus === 'function') window.App.updateSurveyDeviceStatus();
-            if (typeof window.App.showToast === 'function') window.App.showToast('Демо-режим включен', 'info');
-          }
-        } catch(e) {}
-      }, 350);
+      // Сохраняем текущие ответы анкеты если пользователь что-то уже заполнил
+      var ageEl = document.getElementById('survey-input-age');
+      var heightEl = document.getElementById('survey-input-height');
+      var weightEl = document.getElementById('survey-input-weight');
+      var nameEl = document.getElementById('survey-input-name');
+
+      var age = parseInt(ageEl ? ageEl.value : '40', 10) || 40;
+      var height = parseFloat(heightEl ? heightEl.value : '175') || 175;
+      var weight = parseFloat(weightEl ? weightEl.value : '75') || 75;
+      var name = nameEl ? nameEl.value.trim() : 'Пользователь';
+      var hM = height > 3.0 ? height / 100.0 : height;
+      var bmi = Math.round((weight / (hM * hM)) * 10) / 10;
+
+      window.surveyData = window.surveyData || {};
+      window.surveyData.name = name;
+      window.surveyData.age = age;
+      window.surveyData.heightCm = height;
+      window.surveyData.weightKg = weight;
+      window.surveyData.bmi = bmi;
+      if (window.surveyData.smoking === null || window.surveyData.smoking === undefined) window.surveyData.smoking = 0;
+      if (window.surveyData.familyHistory === null || window.surveyData.familyHistory === undefined) window.surveyData.familyHistory = 0;
+      if (window.surveyData.stress === null || window.surveyData.stress === undefined) window.surveyData.stress = 1;
+      if (window.surveyData.activity === null || window.surveyData.activity === undefined) window.surveyData.activity = 1;
+
+      try {
+        localStorage.setItem('qamqor_user_profile', JSON.stringify(window.surveyData));
+      } catch(e) {}
+
+      // Запускаем демо-режим сразу в основном приложении
+      safeStartDemo();
     }
 
     function handleStepBack(targetStep, e) {
