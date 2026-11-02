@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Qamqor — Мониторинг здоровья и кардио-рисков</title>
+  
+  <!-- PWA Meta Tags -->
+  <meta name="theme-color" content="#090d16">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Qamqor">
+  <meta name="description" content="Qamqor — персональный кардиомониторинг со смарт-браслета, оценка рисков и персональные рекомендации.">
+
+  <!-- Manifest & Favicon -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%23090d16' stroke='%2310b981' stroke-width='4'/%3E%3Cpath d='M20 52 L35 52 L42 28 L54 75 L62 45 L68 55 L80 52' fill='none' stroke='%2310b981' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#ecfdf5',
+              400: '#34d399',
+              500: '#10b981',
+              600: '#059669',
+              900: '#064e3b',
+            },
+            dark: {
+              bg: '#090d16',
+              surface: '#0f172a',
+              card: '#131e33',
+              border: '#1e293b'
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: #090d16;
+      color: #f1f5f9;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    .font-mono-numbers {
+      font-family: 'JetBrains Mono', monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: #090d16; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+    .glass-card {
+      background: rgba(19, 30, 51, 0.72);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .glass-nav {
+      background: rgba(9, 13, 22, 0.94);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .ecg-canvas-bg { background: #060b13; }
+  </style>
+</head>
+<body class="min-h-screen text-slate-100 flex flex-col justify-between selection:bg-emerald-500/30 selection:text-emerald-300">
+
+  <!-- ======================================================== -->
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <!-- ======================================================== -->
+  <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full px-4"></div>
+
+  <!-- ======================================================== -->
+  <!-- SCREEN 1: ONBOARDING — ЭТАП 1: ПОДКЛЮЧЕНИЕ БРАСЛЕТА -->
+  <!-- ======================================================== -->
+  <section id="screen-onboarding-connect" class="hidden flex-1 flex flex-col items-center justify-center p-4 sm:p-6 max-w-xl mx-auto w-full my-auto">
+    
+    <div class="text-center space-y-2 mb-6">
+      <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 shadow-xl shadow-emerald-500/20 text-white mb-2 ring-1 ring-white/10">
+        <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
+          <path d="M12 12v3"/>
+          <path d="M12 18h.01"/>
+        </svg>
+      </div>
+      <div class="flex items-center justify-center space-x-2">
+        <h1 class="text-2xl font-extrabold tracking-tight text-white">Qamqor</h1>
+        <span class="text-[11px] font-mono uppercase tracking-wider font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Здоровье</span>
+      </div>
+      <h2 class="text-lg font-bold text-slate-200">Умный мониторинг здоровья</h2>
+      <p class="text-xs sm:text-sm text-slate-400 max-w-md mx-auto leading-relaxed">
+        Отслеживайте пульс, уровень кислорода и кардиограмму в реальном времени с персональными рекомендациями.
+      </p>
+    </div>
+
+    <!-- Smart Band Illustration -->
+    <div class="relative w-full max-w-xs h-44 flex items-center justify-center my-3">
+      <div class="absolute inset-0 bg-emerald-500/10 rounded-full blur-3xl"></div>
+      <div class="relative flex flex-col items-center">
+        <div class="w-16 h-8 bg-gradient-to-b from-slate-800 to-slate-900 rounded-t-xl border-t border-x border-slate-700"></div>
+        <div class="relative w-28 h-36 bg-gradient-to-b from-slate-900 via-[#0e1626] to-slate-900 rounded-3xl border-2 border-slate-700 shadow-2xl flex flex-col items-center justify-between p-3 ring-1 ring-white/10">
+          <div class="w-full h-full bg-[#050912] rounded-2xl border border-slate-800 flex flex-col items-center justify-around p-2 text-center">
+            <div class="w-full flex justify-between items-center px-1 text-[8px] font-mono text-slate-500">
+              <span id="band-sim-time">12:00</span>
+              <span class="text-emerald-400">LIVE ●</span>
+            </div>
+            <div class="flex flex-col items-center my-1">
+              <svg class="w-5 h-5 text-rose-500 fill-rose-500" viewBox="0 0 24 24">
+                <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
+              </svg>
+              <div class="text-[10px] font-mono font-bold text-white mt-0.5">QAMQOR</div>
+            </div>
+            <svg class="w-16 h-3 text-emerald-400" viewBox="0 0 60 16" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M0 8 L18 8 L22 2 L28 14 L33 6 L37 10 L60 8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>
+        <div class="w-16 h-8 bg-gradient-to-t from-slate-800 to-slate-900 rounded-b-xl border-b border-x border-slate-700"></div>
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="w-full space-y-2.5 mt-2">
+      <!-- Start Step-by-Step Questionnaire -->
+      <button onclick="App.startSurveyWizard();" class="w-full flex items-center justify-center space-x-2 py-3 px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-500/25 active:scale-98 transition transform">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+          <polyline points="10 9 9 9 8 9"/>
+        </svg>
+        <span>Заполнить анкету здоровья (4 простых шага)</span>
+      </button>
+
+      <!-- Direct Instant Demo Button -->
+      <button onclick="App.startInstantDemo();" class="w-full flex items-center justify-center space-x-2 py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500/90 to-blue-600/90 hover:from-cyan-400 hover:to-blue-500 text-white font-semibold text-xs shadow-md shadow-cyan-500/20 active:scale-98 transition">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        <span>Быстрый запуск демо-версии (без датчика)</span>
+      </button>
+
+      <button id="btn-onboarding-connect" onclick="App.bleService.connect().then(() => { App.showToast('Браслет подключен!', 'success'); setTimeout(() => App.startSurveyWizard(), 500); }).catch(e => { if (e.name !== 'NotFoundError') alert(e.message); })" class="w-full flex items-center justify-center space-x-2 py-2.5 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold text-xs border border-slate-700 transition">
+        <svg class="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="m7 7 10 10-5 5V2l5 5L7 17"/>
+        </svg>
+        <span>Подключить реальный Qamqor Band по Bluetooth</span>
+      </button>
+    </div>
+
+    <div class="text-[11px] text-slate-500 text-center mt-3">
+      Безопасный Web Bluetooth • Данные обрабатываются строго локально в браузере
+    </div>
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- SCREEN 2: ONBOARDING — ПОШАГОВАЯ АНКЕТА (4 ШАГА + СВОДКА) -->
+  <!-- ======================================================== -->
+  <section id="screen-onboarding-survey" class="flex-1 flex flex-col justify-start p-4 sm:p-6 max-w-xl mx-auto w-full my-auto">
+    
+    <!-- Top Step Header & Progress Indicator -->
+    <div class="w-full mb-4">
+      <div class="flex items-center justify-between text-xs font-semibold px-1 mb-2">
+        <span id="survey-step-pill" class="inline-flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 font-bold text-[11px]">
+          <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+          <span id="survey-step-indicator-text">Шаг 1 из 4</span>
+        </span>
+        <span id="survey-step-title-text" class="text-xs font-bold text-slate-300">Основная информация</span>
+      </div>
+      <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+        <div id="survey-progress-bar" class="bg-gradient-to-r from-emerald-400 to-cyan-400 h-2 rounded-full transition-all duration-300" style="width: 25%;"></div>
+      </div>
+    </div>
+
+    <!-- Main Card Container -->
+    <div class="glass-card rounded-2xl p-5 border border-slate-800 space-y-4">
+      
+      <!-- ========================================== -->
+      <!-- STEP 1: ОСНОВНАЯ ИНФОРМАЦИЯ -->
+      <!-- ========================================== -->
+      <div id="survey-panel-step-1" class="space-y-4">
+        <div class="border-b border-slate-800/80 pb-3">
+          <h2 class="text-base font-bold text-white">Основная информация</h2>
+          <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+            Укажите ваш возраст, рост и вес. Они используются для индивидуальной калибровки модели и автоматического расчёта индекса массы тела (ИМТ).
+          </p>
+        </div>
+
+        <!-- Имя (опционально) -->
+        <div class="space-y-1">
+          <label class="block text-xs font-medium text-slate-300">Как вас зовут? <span class="text-slate-500 font-normal">(необязательно)</span></label>
+          <input type="text" id="survey-input-name" placeholder="Например: Айдар" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400">
+        </div>
+
+        <!-- Вопрос 1: Возраст -->
+        <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
+          <div class="flex items-center justify-between">
+            <label class="block text-xs font-bold text-slate-200">Сколько вам лет? <span class="text-rose-400">*</span></label>
+            <button type="button" onclick="App.toggleWhyExplain('age')" class="text-[11px] text-cyan-400 hover:text-cyan-300 inline-flex items-center space-x-1">
+              <span>💡 Почему мы спрашиваем?</span>
+            </button>
+          </div>
+          <div class="text-[11px] text-slate-400">Например: 35 лет. Допустимый диапазон от 10 до 110 лет.</div>
+          <input type="number" id="survey-input-age" min="10" max="110" value="40" placeholder="40" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400">
+          
+          <div id="why-explain-age" class="hidden mt-2 p-2.5 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
+            <b>Зачем это модели:</b> С возрастом естественные параметры эластичности сосудов и базовые границы пульса меняются. Модель нормализует возраст по формуле \(A = (Возраст - 40) / 10\), чтобы не сравнивать вас с абстрактным человеком, а откалибровать индивидуальные границы.
+          </div>
+        </div>
+
+        <!-- Вопрос 2 и 3: Рост и Вес -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          
+          <!-- Рост -->
+          <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
+            <div class="flex items-center justify-between">
+              <label class="block text-xs font-bold text-slate-200">Какой у вас рост? (см) <span class="text-rose-400">*</span></label>
+              <button type="button" onclick="App.toggleWhyExplain('height')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+            </div>
+            <div class="text-[11px] text-slate-400">Например: 175 см</div>
+            <input type="number" id="survey-input-height" oninput="App.updateSurveyBMIPreview()" min="50" max="250" value="175" placeholder="175" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400">
+            <div id="why-explain-height" class="hidden mt-2 p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
+              Рост используется вместе с весом для автоматического вычисления индекса массы тела (ИМТ). Мы не просим вас рассчитывать ИМТ самостоятельно.
+            </div>
+          </div>
+
+          <!-- Вес -->
+          <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
+            <div class="flex items-center justify-between">
+              <label class="block text-xs font-bold text-slate-200">Какой у вас вес? (кг) <span class="text-rose-400">*</span></label>
+              <button type="button" onclick="App.toggleWhyExplain('weight')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+            </div>
+            <div class="text-[11px] text-slate-400">Например: 75 кг</div>
+            <input type="number" id="survey-input-weight" oninput="App.updateSurveyBMIPreview()" min="25" max="300" value="75" placeholder="75" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400">
+            <div id="why-explain-weight" class="hidden mt-2 p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
+              Вес отражает массу тела. В сочетании с ростом он определяет базовую гемодинамическую нагрузку на миокард.
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Live BMI Calculation Display -->
+        <div id="survey-bmi-preview-box" class="p-3 rounded-xl bg-slate-950 border border-cyan-500/30 flex items-center justify-between text-xs">
+          <div class="space-y-0.5">
+            <span class="text-slate-400 text-[11px]">Автоматический расчёт ИМТ (модель B):</span>
+            <div id="survey-bmi-preview-status" class="font-bold text-white text-xs">24.5 кг/м² • Нормальная масса тела</div>
+          </div>
+          <span id="survey-bmi-b-badge" class="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-mono font-bold">B = -0.10</span>
+        </div>
+
+        <!-- Buttons Step 1 -->
+        <div class="flex items-center space-x-3 pt-2">
+          <button type="button" onclick="App.startInstantDemo()" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 text-xs font-semibold border border-cyan-500/30 flex items-center space-x-1.5 transition">
+            <svg class="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            <span>Быстрое Демо</span>
+          </button>
+          <button type="button" onclick="App.nextSurveyStep(1)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 transition">
+            Продолжить → (Шаг 2)
+          </button>
+        </div>
+      </div>
+
+      <!-- ========================================== -->
+      <!-- STEP 2: ПРИВЫЧКИ (КУРЕНИЕ, СТРЕСС, СПОРТ) -->
+      <!-- ========================================== -->
+      <div id="survey-panel-step-2" class="hidden space-y-4">
+        <div class="border-b border-slate-800/80 pb-3">
+          <h2 class="text-base font-bold text-white">Повседневные привычки</h2>
+          <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+            Ваш образ жизни напрямую формирует фоновый уровень нагрузки на сердечно-сосудистую систему.
+          </p>
+        </div>
+
+        <!-- 1. Курение -->
+        <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs font-bold text-slate-200">Вы курите?</div>
+              <div class="text-[11px] text-slate-400">Сигареты, электронные испарители, кальяны или стики</div>
+            </div>
+            <button type="button" onclick="App.toggleWhyExplain('smoking')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+          </div>
+          <div id="why-explain-smoking" class="hidden p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
+            <b>Влияние фактора:</b> Курение повышает тонус периферических сосудов и снижает доставку кислорода к тканям. Выбор «Предпочитаю не отвечать» не приравнивается к отсутствию курения — система честно уведомит, что для полного расчета требуется этот параметр.
+          </div>
+          <div class="grid grid-cols-3 gap-2 pt-1">
+            <button type="button" id="opt-smoking-0" onclick="App.setSurveyChoice('smoking', 0)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              🌱 Не курю
+            </button>
+            <button type="button" id="opt-smoking-1" onclick="App.setSurveyChoice('smoking', 1)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              🚬 Курю
+            </button>
+            <button type="button" id="opt-smoking-unknown" onclick="App.setSurveyChoice('smoking', null)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-[10px] sm:text-xs font-medium text-center hover:bg-slate-700 transition">
+              🔒 Не отвечать
+            </button>
+          </div>
+          <div id="survey-smoking-notice" class="hidden text-[10px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg">
+            ℹ️ Ответ «Предпочитаю не отвечать» зафиксирован. Значение не будет подменяться нулем. Для полного расчета индекса потребуется указать этот фактор.
+          </div>
+        </div>
+
+        <!-- 2. Стресс -->
+        <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs font-bold text-slate-200">Как часто вы испытываете стресс?</div>
+              <div class="text-[11px] text-slate-400">Оцените ваше эмоциональное состояние за последний месяц</div>
+            </div>
+            <button type="button" onclick="App.toggleWhyExplain('stress')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+          </div>
+          <div id="why-explain-stress" class="hidden p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
+            <b>Влияние фактора:</b> Хронический стресс увеличивает выброс адреналина и кортизола, повышая частоту пульса и снижая вариабельность ритма (HRV).
+          </div>
+          <div class="grid grid-cols-3 gap-2 pt-1">
+            <button type="button" id="opt-stress-0" onclick="App.setSurveyChoice('stress', 0)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              😌 Редко
+            </button>
+            <button type="button" id="opt-stress-1" onclick="App.setSurveyChoice('stress', 1)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              😐 Иногда (умеренно)
+            </button>
+            <button type="button" id="opt-stress-2" onclick="App.setSurveyChoice('stress', 2)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              😫 Почти каждый день
+            </button>
+          </div>
+        </div>
+
+        <!-- 3. Физическая активность -->
+        <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <div>
+              <div class="text-xs font-bold text-slate-200">Насколько регулярно вы двигаетесь или тренируетесь?</div>
+              <div class="text-[11px] text-slate-400">Прогулки, зарядка, фитнес, спорт или физический труд</div>
+            </div>
+            <button type="button" onclick="App.toggleWhyExplain('activity')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+          </div>
+          <div id="why-explain-activity" class="hidden p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
+            <b>Защитный фактор:</b> Регулярное движение укрепляет сердечную мышцу и сосуды. В математической модели физическая активность имеет отрицательный весовой коэффициент (−0.30·P) и снижает расчётный риск!
+          </div>
+          <div class="grid grid-cols-3 gap-2 pt-1">
+            <button type="button" id="opt-activity-0" onclick="App.setSurveyChoice('activity', 0)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              🪑 Почти не двигаюсь
+            </button>
+            <button type="button" id="opt-activity-1" onclick="App.setSurveyChoice('activity', 1)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              🚶 Умеренно (прогулки)
+            </button>
+            <button type="button" id="opt-activity-2" onclick="App.setSurveyChoice('activity', 2)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              🏃 Регулярно занимаюсь
+            </button>
+          </div>
+        </div>
+
+        <!-- Buttons Step 2 -->
+        <div class="flex items-center space-x-3 pt-2">
+          <button type="button" onclick="App.goToSurveyStep(1)" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+            ← Назад (Шаг 1)
+          </button>
+          <button type="button" onclick="App.nextSurveyStep(2)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 transition">
+            Продолжить → (Шаг 3)
+          </button>
+        </div>
+      </div>
+
+      <!-- ========================================== -->
+      <!-- STEP 3: СЕМЕЙНАЯ ИСТОРИЯ (НАСЛЕДСТВЕННОСТЬ) -->
+      <!-- ========================================== -->
+      <div id="survey-panel-step-3" class="hidden space-y-4">
+        <div class="border-b border-slate-800/80 pb-3">
+          <h2 class="text-base font-bold text-white">Семейная история</h2>
+          <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+            Генетическая предрасположенность к сердечно-сосудистым заболеваниям у кровных родственников.
+          </p>
+        </div>
+
+        <div class="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
+          <div class="flex items-start justify-between">
+            <div class="space-y-1">
+              <div class="text-xs font-bold text-slate-100">
+                Были ли у ваших близких родственников заболевания сердца или сосудов?
+              </div>
+              <div class="text-[11px] text-slate-400 leading-relaxed">
+                Инфаркт миокарда, инсульт или гипертония у родителей, родных братьев/сестёр или бабушек/дедушек.
+              </div>
+            </div>
+            <button type="button" onclick="App.toggleWhyExplain('familyHistory')" class="text-[11px] text-cyan-400 hover:text-cyan-300 whitespace-nowrap ml-2">
+              💡 Зачем?
+            </button>
+          </div>
+
+          <div id="why-explain-familyHistory" class="hidden p-2.5 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
+            <b>Внимание к данным:</b> Семейный анамнез учитывает генетический компонент. Мы <b>не приравниваем ответ «Не знаю» к «Нет»</b> и не подставляем вымышленные числа. Если вы не уверены, вы сможете уточнить это у родных позже.
+          </div>
+
+          <div class="grid grid-cols-3 gap-2 pt-2">
+            <button type="button" id="opt-familyHistory-0" onclick="App.setSurveyChoice('familyHistory', 0)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              ❌ Нет
+            </button>
+            <button type="button" id="opt-familyHistory-1" onclick="App.setSurveyChoice('familyHistory', 1)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              ⚠️ Да, были
+            </button>
+            <button type="button" id="opt-familyHistory-unknown" onclick="App.setSurveyChoice('familyHistory', null)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+              ❓ Не знаю
+            </button>
+          </div>
+
+          <div id="survey-family-notice" class="hidden text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-lg leading-relaxed">
+            ℹ️ Ответ «Не знаю» зафиксирован. Данные не подменяются нулем. Вы сможете обновить ответ в настройках после разговора с родственниками.
+          </div>
+        </div>
+
+        <!-- Buttons Step 3 -->
+        <div class="flex items-center space-x-3 pt-2">
+          <button type="button" onclick="App.goToSurveyStep(2)" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+            ← Назад (Шаг 2)
+          </button>
+          <button type="button" onclick="App.nextSurveyStep(3)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 transition">
+            Продолжить → (Шаг 4)
+          </button>
+        </div>
+      </div>
+
+      <!-- ========================================== -->
+      <!-- STEP 4: ПОДКЛЮЧЕНИЕ УСТРОЙСТВА -->
+      <!-- ========================================== -->
+      <div id="survey-panel-step-4" class="hidden space-y-4">
+        <div class="border-b border-slate-800/80 pb-3">
+          <h2 class="text-base font-bold text-white">Подключение и проверка датчика</h2>
+          <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+            Подготовьте устройство и следуйте 4 простым правилам для получения достоверных показателей.
+          </p>
+        </div>
+
+        <!-- 4 Rules Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-start space-x-2.5">
+            <span class="w-6 h-6 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-bold text-xs flex items-center justify-center flex-shrink-0">1</span>
+            <div class="text-[11px] text-slate-300 leading-snug">
+              <b>Подключите датчик:</b> включите браслет Qamqor или запустите демо-режим.
+            </div>
+          </div>
+          <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-start space-x-2.5">
+            <span class="w-6 h-6 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-bold text-xs flex items-center justify-center flex-shrink-0">2</span>
+            <div class="text-[11px] text-slate-300 leading-snug">
+              <b>Проверьте крепление:</b> датчик должен плотно прилегать к коже без сдавливания сосудов.
+            </div>
+          </div>
+          <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-start space-x-2.5">
+            <span class="w-6 h-6 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-bold text-xs flex items-center justify-center flex-shrink-0">3</span>
+            <div class="text-[11px] text-slate-300 leading-snug">
+              <b>Посидите спокойно:</b> отдохните 3–5 минут в покое, не двигайте рукой и не разговаривайте.
+            </div>
+          </div>
+          <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-start space-x-2.5">
+            <span class="w-6 h-6 rounded-lg bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-bold text-xs flex items-center justify-center flex-shrink-0">4</span>
+            <div class="text-[11px] text-slate-300 leading-snug">
+              <b>Дождитесь проверки:</b> система оценит стабильность сигнала (порог качества c ≥ 0.5).
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Connection & Quality Indicator Box -->
+        <div id="survey-device-status-box" class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-slate-400">Статус устройства:</span>
+            <span id="survey-device-conn-text" class="font-bold text-slate-300">Не подключено</span>
+          </div>
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-slate-400">Качество сигнала (c):</span>
+            <span id="survey-device-quality-text" class="font-bold text-slate-400">Ожидание измерений</span>
+          </div>
+          <div id="survey-device-hint" class="text-[11px] text-slate-400 bg-slate-900 p-2 rounded-lg leading-relaxed">
+            💡 Нажмите кнопку ниже, чтобы подключить браслет по Bluetooth или запустить демонстрацию с виртуальными датчиками.
+          </div>
+        </div>
+
+        <!-- Connection Buttons -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <button type="button" onclick="App.bleService.connect().then(() => { App.showToast('Браслет подключен!', 'success'); App.updateSurveyDeviceStatus(); }).catch(e => { if (e.name !== 'NotFoundError') alert(e.message); })" class="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 flex items-center justify-center space-x-2 transition">
+            <svg class="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="m7 7 10 10-5 5V2l5 5L7 17"/>
+            </svg>
+            <span>Подключить по Bluetooth</span>
+          </button>
+          <button type="button" onclick="App.startDemoMode(); App.updateSurveyDeviceStatus(); App.showToast('Демо-режим включен', 'info');" class="py-2.5 px-3 rounded-xl bg-cyan-950/60 hover:bg-cyan-900/60 text-cyan-300 text-xs font-semibold border border-cyan-700/50 flex items-center justify-center space-x-2 transition">
+            <span>Запустить в демо-режиме</span>
+          </button>
+        </div>
+
+        <!-- Buttons Step 4 -->
+        <div class="flex items-center space-x-3 pt-2">
+          <button type="button" onclick="App.goToSurveyStep(3)" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+            ← Назад (Шаг 3)
+          </button>
+          <button type="button" onclick="App.goToSurveyStep(5)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 transition">
+            Проверить готовность данных →
+          </button>
+        </div>
+      </div>
+
+      <!-- ========================================== -->
+      <!-- STEP 5: СВОДКА ГОТОВНОСТИ ДАННЫХ -->
+      <!-- ========================================== -->
+      <div id="survey-panel-step-5" class="hidden space-y-4">
+        <div class="border-b border-slate-800/80 pb-3">
+          <h2 class="text-base font-bold text-white">Готовность данных к расчёту</h2>
+          <p class="text-xs text-slate-400 mt-1 leading-relaxed">
+            Проверка наличия всех параметров для математической модели Qamqor без подмены неизвестных ответов.
+          </p>
+        </div>
+
+        <!-- Parameter Status Badges Grid -->
+        <div id="survey-summary-items" class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+          <!-- Populated dynamically by App.renderSurveySummary() -->
+        </div>
+
+        <!-- Model Decision / Calculation Verdict Card -->
+        <div id="survey-summary-verdict" class="p-4 rounded-xl space-y-2">
+          <!-- Populated dynamically by App.renderSurveySummary() -->
+        </div>
+
+        <!-- Final Action Buttons -->
+        <div id="survey-summary-actions" class="flex items-center space-x-3 pt-2">
+          <!-- Populated dynamically by App.renderSurveySummary() -->
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- SCREEN 3: ОСНОВНОЕ ПРИЛОЖЕНИЕ (5 ПОНЯТНЫХ ВКЛАДОК) -->
+  <!-- ======================================================== -->
+  <div id="screen-main-app" class="hidden flex-1 flex flex-col justify-between">
+    
+    <!-- Top App Bar -->
+    
+    <!-- Remote Guardian Mode Banner (for son/doctor in another city) -->
+    <div id="guardian-remote-banner" class="hidden bg-gradient-to-r from-violet-950/90 to-purple-950/90 border-b border-violet-500/30 px-4 py-2.5 text-xs text-violet-200">
+      <div class="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-2">
+        <div class="flex items-center space-x-2">
+          <span class="w-2.5 h-2.5 rounded-full bg-violet-400 animate-pulse"></span>
+          <span>👁️ <b>РЕЖИМ НАБЛЮДЕНИЯ (ОПЕКУН / ВРАЧ):</b> Вы удалённо просматриваете данные близкого человека</span>
+        </div>
+        <div class="flex items-center space-x-2">
+          <button id="btn-call-patient" onclick="App.callPatient()" class="px-2.5 py-1 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-white text-[11px] font-semibold flex items-center space-x-1">
+            <span>📞 Позвонить</span>
+          </button>
+          <a href="tel:103" class="px-2.5 py-1 rounded-lg bg-rose-600/80 hover:bg-rose-500 text-white text-[11px] font-semibold flex items-center space-x-1">
+            <span>🚑 Вызвать 103</span>
+          </a>
+          <button onclick="App.exitGuardianView()" class="px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:text-white text-[11px]">
+            Выход
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <header class="sticky top-0 z-40 w-full glass-nav border-b border-slate-800/80 px-4 py-3">
+      <div class="max-w-5xl mx-auto flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-white shadow-md shadow-emerald-500/20">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+              <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
+            </svg>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="text-sm font-bold text-white tracking-tight">Qamqor</span>
+              <span class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">v1.0</span>
+            </div>
+            <div class="flex items-center space-x-1.5 text-[11px] text-slate-400">
+              <span id="app-connection-indicator-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+              <span id="app-connection-indicator-text">Не подключено</span>
+              <span>•</span>
+              <span id="app-last-sync-time" class="font-mono text-slate-500">Синхр: --:--</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+          <button onclick="App.openSOSModal()" class="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-rose-600/90 hover:bg-rose-500 text-white font-extrabold text-xs shadow-md shadow-rose-600/20 border border-rose-400/30 transition active:scale-95">
+            <svg class="w-3.5 h-3.5 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span>SOS</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Demo Alert Banner -->
+    <div id="demo-mode-alert-bar" class="hidden bg-amber-500/10 border-b border-amber-500/20 px-4 py-1.5 text-xs text-amber-200">
+      <div class="max-w-5xl mx-auto flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span><b>ДЕМО-РЕЖИМ:</b> данные симулируются в реальном времени. Переключайте сценарии:</span>
+        </div>
+        <div class="flex items-center space-x-1">
+          <button onclick="App.setDemoScenario('normal')" class="px-2 py-0.5 rounded bg-slate-800 text-[10px] text-slate-300 hover:text-white">Норма</button>
+          <button onclick="App.setDemoScenario('tachycardia')" class="px-2 py-0.5 rounded bg-slate-800 text-[10px] text-amber-300 hover:text-white">Тахикардия</button>
+          <button onclick="App.setDemoScenario('hypoxia')" class="px-2 py-0.5 rounded bg-slate-800 text-[10px] text-rose-300 hover:text-white">Гипоксия</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Tab Content Container -->
+    <main class="max-w-5xl mx-auto px-4 py-4 w-full flex-1 pb-24">
+
+      <!-- ==================================================== -->
+      <!-- TAB 1: ГЛАВНАЯ ПАНЕЛЬ (HOME) -->
+      <!-- ==================================================== -->
+      <section id="tab-home" class="space-y-4">
+        
+        <!-- Medical Disclaimer Banner -->
+        <div class="p-3 rounded-2xl bg-cyan-950/40 border border-cyan-800/40 text-cyan-200 text-xs flex items-start space-x-2.5">
+          <svg class="w-4 h-4 text-cyan-400 flex-shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <div class="leading-relaxed text-[11px]">
+            <b>Медицинское напоминание:</b> Данные приложения носят информационно-профилактический характер. При остром ухудшении самочувствия обязательно обратитесь к врачу или вызовите скорую помощь (103).
+          </div>
+        </div>
+
+        <!-- Risk Index Card (0 - 100) with SVG circular gauge -->
+        <div class="glass-card rounded-2xl p-5 border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
+          <!-- Left: Text info -->
+          <div class="space-y-1 text-center md:text-left">
+            <span class="text-xs uppercase tracking-wider font-extrabold text-slate-400">Индекс кардио-риска</span>
+            <div class="flex items-baseline justify-center md:justify-start space-x-2">
+              <span id="home-index-number" class="text-5xl font-extrabold font-mono-numbers text-white tracking-tight">18</span>
+              <span class="text-xs text-slate-400 font-mono">/ 100</span>
+            </div>
+            <div id="home-index-zone-label" class="text-xs font-bold text-emerald-400">Зеленая зона (Низкий риск)</div>
+            <div id="home-index-status-desc" class="text-[11px] text-slate-400">Состояние стабильное</div>
+          </div>
+
+          <!-- Right: SVG circular gauge + quality -->
+          <div class="w-full md:w-auto flex flex-col items-center space-y-3">
+            <!-- SVG Gauge -->
+            <div class="relative flex-shrink-0">
+              <svg width="140" height="140" viewBox="0 0 140 140">
+                <!-- Background track -->
+                <circle cx="70" cy="70" r="54" fill="none" stroke="#1e293b" stroke-width="10" />
+                <!-- Colored arc (filled by JS) -->
+                <circle id="gauge-arc"
+                  cx="70" cy="70" r="54"
+                  fill="none"
+                  stroke="#10b981"
+                  stroke-width="10"
+                  stroke-linecap="round"
+                  stroke-dasharray="0 339.29"
+                  transform="rotate(-90 70 70)"
+                  style="transition: stroke-dasharray 0.6s ease, stroke 0.4s ease;"
+                />
+                <!-- Center number -->
+                <text id="gauge-center-num"
+                  x="70" y="66"
+                  text-anchor="middle"
+                  dominant-baseline="middle"
+                  font-size="26"
+                  font-weight="800"
+                  font-family="JetBrains Mono, monospace"
+                  fill="#10b981">18</text>
+                <!-- Center label -->
+                <text id="gauge-center-label"
+                  x="70" y="88"
+                  text-anchor="middle"
+                  dominant-baseline="middle"
+                  font-size="9"
+                  font-weight="600"
+                  fill="#10b981">Норма</text>
+                <!-- Zone marks -->
+                <text x="18" y="118" font-size="7" fill="#475569" text-anchor="middle">0</text>
+                <text x="70" y="130" font-size="7" fill="#f59e0b" text-anchor="middle">20</text>
+                <text x="122" y="118" font-size="7" fill="#ef4444" text-anchor="middle">40+</text>
+              </svg>
+            </div>
+
+            <!-- Quality indicator below gauge -->
+            <div class="w-full space-y-1.5">
+              <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center text-xs">
+                <div>
+                  <span class="text-slate-400 text-[11px]">Достоверность:</span>
+                  <div id="home-quality-desc" class="font-medium text-slate-200 text-[11px]">Высокая полнота данных</div>
+                </div>
+                <div class="text-right">
+                  <span id="home-quality-percent" class="font-mono font-bold text-cyan-400 text-sm">88%</span>
+                  <div class="w-14 bg-slate-800 h-1 rounded-full overflow-hidden mt-1">
+                    <div id="home-quality-bar" class="bg-cyan-400 h-1 rounded-full" style="width: 88%;"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="text-[10px] text-slate-400 flex items-center space-x-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                <span id="home-baseline-status-desc">Индивидуальная норма откалибрована</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- hidden progress bar kept for JS compatibility -->
+        <div class="hidden"><div id="home-index-progress-bar" style="width:18%"></div></div>
+
+        <!-- Quick Advice Card on Home -->
+        <div class="glass-card rounded-2xl p-4 border border-emerald-500/20 bg-emerald-500/5 flex items-start space-x-3">
+          <div class="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 text-base flex-shrink-0 mt-0.5">
+            💡
+          </div>
+          <div class="space-y-1">
+            <div class="text-xs font-bold text-emerald-300 uppercase tracking-wider">Совет прямо сейчас</div>
+            <div id="home-quick-advice-text" class="text-xs text-slate-300 leading-relaxed">
+              Показатели стабильны. Поддерживайте водный баланс: выпейте стакан чистой воды и сделайте легкую разминку для глаз при работе за экраном.
+            </div>
+          </div>
+        </div>
+
+        <!-- Biometrics Grid (Pulse & SpO2) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <!-- Pulse -->
+          <div class="glass-card rounded-2xl p-4 border border-slate-800 flex items-center justify-between">
+            <div class="space-y-1">
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Пульс (ЧСС)</span>
+              <div class="flex items-baseline space-x-1.5">
+                <span id="home-metric-bpm-val" class="text-4xl font-extrabold font-mono-numbers text-white">72</span>
+                <span class="text-xs text-slate-400">уд/мин</span>
+              </div>
+              <span class="text-[10px] text-emerald-400">В пределах нормы покоя (60-88)</span>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-500">
+              <svg class="w-6 h-6 animate-pulse" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
+              </svg>
+            </div>
+          </div>
+
+          <!-- SpO2 -->
+          <div class="glass-card rounded-2xl p-4 border border-slate-800 flex items-center justify-between">
+            <div class="space-y-1">
+              <span class="text-xs uppercase tracking-wider text-slate-400 font-semibold">Кислород SpO2</span>
+              <div class="flex items-baseline space-x-1.5">
+                <span id="home-metric-spo2-val" class="text-4xl font-extrabold font-mono-numbers text-white">98%</span>
+              </div>
+              <span class="text-[10px] text-cyan-400">Отличная сатурация (>95%)</span>
+            </div>
+            <div class="w-10 h-10 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
+              <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live ECG Canvas Oscilloscope -->
+        <div class="glass-card rounded-2xl p-4 border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span class="text-xs font-bold text-white">Кардиограмма в реальном времени (ЭКГ)</span>
+            </div>
+            <span id="home-ecg-status-pill" class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">LIVE 250 Гц</span>
+          </div>
+
+          <div class="relative w-full h-44 rounded-xl overflow-hidden border border-slate-800/90 ecg-canvas-bg">
+            <canvas id="homeECGCanvas" class="w-full h-full block"></canvas>
+            <div id="home-ecg-empty-state" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-slate-950/70 text-slate-400 text-xs space-y-1">
+              <span>Сигнал ЭКГ не поступает</span>
+              <span class="text-[10px] text-slate-500">Подключите браслет или включите деморежим</span>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ==================================================== -->
+      <!-- TAB 2: МОНИТОРИНГ (METRICS & FULL ECG) -->
+      <!-- ==================================================== -->
+      <section id="tab-metrics" class="hidden space-y-4">
+        
+        <div class="glass-card rounded-2xl p-4 border border-slate-800 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-white flex items-center space-x-2">
+              <span>Электрокардиограмма высокой четкости</span>
+            </h3>
+            <span id="ecg-status-pill" class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono">LIVE 250 Гц</span>
+          </div>
+
+          <div class="relative w-full h-56 rounded-xl overflow-hidden border border-slate-800 ecg-canvas-bg">
+            <canvas id="liveECGCanvas" class="w-full h-full block"></canvas>
+            <div id="ecg-empty-state" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 text-slate-400 text-xs">
+              <span>Ожидание потока телеметрии...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Biometrics Detailed Metrics Table -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="glass-card rounded-xl p-3 border border-slate-800 text-center">
+            <span class="text-[11px] text-slate-400">Вариабельность (HRV)</span>
+            <div class="text-lg font-bold font-mono text-emerald-400 mt-1">48 <span class="text-xs text-slate-500">мс</span></div>
+          </div>
+          <div class="glass-card rounded-xl p-3 border border-slate-800 text-center">
+            <span class="text-[11px] text-slate-400">Ритмичность</span>
+            <div class="text-lg font-bold font-mono text-cyan-400 mt-1">98%</div>
+          </div>
+          <div class="glass-card rounded-xl p-3 border border-slate-800 text-center">
+            <span class="text-[11px] text-slate-400">Базовый пульс</span>
+            <div class="text-lg font-bold font-mono text-slate-300 mt-1">70 <span class="text-xs text-slate-500">уд/м</span></div>
+          </div>
+          <div class="glass-card rounded-xl p-3 border border-slate-800 text-center">
+            <span class="text-[11px] text-slate-400">Качество связи</span>
+            <div class="text-lg font-bold font-mono text-amber-400 mt-1">100%</div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ==================================================== -->
+      <!-- TAB 3: СОВЕТЫ И АНАЛИЗ (ПОНЯТНЫЙ ЧЕЛОВЕКУ ИНТЕРФЕЙС) -->
+      <!-- ==================================================== -->
+      <section id="tab-factors" class="hidden space-y-4">
+        
+        <div class="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-xs text-slate-300 leading-relaxed flex items-center justify-between">
+          <div>
+            <b class="text-white">Персональный кардио-ассистент:</b>
+            <div class="text-slate-400 mt-0.5">Анализ текущего состояния сердца, сосудов и практические советы по восстановлению.</div>
+          </div>
+          <span class="text-xl">❤️</span>
+        </div>
+
+        <div id="factors-decomposition-container" class="space-y-4">
+          <!-- Dynamic factors and actionable advice populated by App.renderFactorsTab() -->
+        </div>
+
+      </section>
+
+      <!-- ==================================================== -->
+      <!-- TAB 4: ИСТОРИЯ (HISTORY) -->
+      <!-- ==================================================== -->
+      <section id="tab-history" class="hidden space-y-4">
+        
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-bold text-white">Журнал измерений</h3>
+          <button onclick="App.exportHistoryCSV()" class="py-1.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold border border-slate-700 transition flex items-center space-x-1.5">
+            <svg class="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            <span>Экспорт в CSV</span>
+          </button>
+        </div>
+
+        <div id="history-items-container" class="space-y-2">
+          <!-- Populated by App.renderHistoryList() -->
+        </div>
+
+      </section>
+
+      <!-- ==================================================== -->
+      <!-- TAB 5: НАСТРОЙКИ (SETTINGS) -->
+      <!-- ==================================================== -->
+      <section id="tab-settings" class="hidden space-y-4">
+        
+        <div class="glass-card rounded-2xl p-4 border border-slate-800 space-y-3">
+          <div class="text-xs font-bold text-cyan-400 uppercase tracking-wider">Профиль пользователя</div>
+          <div class="grid grid-cols-3 gap-2 text-xs">
+            <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+              <span class="text-slate-500">Имя:</span>
+              <div id="settings-profile-name" class="font-bold text-slate-200">Пользователь</div>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+              <span class="text-slate-500">Возраст:</span>
+              <div id="settings-profile-age" class="font-bold text-slate-200">40 лет</div>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+              <span class="text-slate-500">ИМТ (BMI):</span>
+              <div id="settings-profile-bmi" class="font-bold text-slate-200">24.5 кг/м²</div>
+            </div>
+          </div>
+          <button onclick="App.showScreen('onboarding-survey')" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 border border-slate-700">
+            Изменить данные анкеты
+          </button>
+        </div>
+
+        <div class="glass-card rounded-2xl p-4 border border-slate-800 space-y-3">
+          <div class="text-xs font-bold text-amber-400 uppercase tracking-wider">Демо-режим симуляции</div>
+          <p class="text-xs text-slate-400">Выберите сценарий, чтобы проверить, как приложение реагирует на разные состояния:</p>
+          <div class="grid grid-cols-3 gap-2">
+            <button onclick="App.setDemoScenario('normal')" class="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-emerald-400 border border-slate-700">
+              Норма
+            </button>
+            <button onclick="App.setDemoScenario('tachycardia')" class="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-amber-400 border border-slate-700">
+              Тахикардия
+            </button>
+            <button onclick="App.setDemoScenario('hypoxia')" class="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-rose-400 border border-slate-700">
+              Гипоксия
+            </button>
+          </div>
+        </div>
+
+        <div class="space-y-2 pt-2">
+          <button onclick="App.resetAllData()" class="w-full py-2.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 font-semibold text-xs border border-rose-800/40 transition">
+            Сбросить все локальные данные и калибровку
+          </button>
+        </div>
+
+      </section>
+
+      <!-- ==================================================== -->
+      <!-- TAB 6: ОПЕКУН / ВРАЧ (GUARDIAN) -->
+      <!-- ==================================================== -->
+      <section id="tab-guardian" class="hidden space-y-4">
+        <!-- Content populated dynamically by App.renderGuardianTab() -->
+        <div class="p-6 text-center text-slate-500 text-sm">Загрузка...</div>
+      </section>
+
+    </main>
+
+    <!-- BOTTOM TAB NAVIGATION (6 TABS) -->
+    <nav class="fixed bottom-0 left-0 right-0 z-40 glass-nav border-t border-slate-800/80 px-1 py-2">
+      <div class="max-w-lg mx-auto grid grid-cols-6 gap-0.5">
+        
+        <button id="nav-btn-home" onclick="App.switchTab('home')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-emerald-400 font-semibold text-[9px] transition">
+          <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          </svg>
+          <span>Главная</span>
+        </button>
+
+        <button id="nav-btn-metrics" onclick="App.switchTab('metrics')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[9px] transition hover:text-white">
+          <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+          <span>ЭКГ</span>
+        </button>
+
+        <button id="nav-btn-factors" onclick="App.switchTab('factors')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[9px] transition hover:text-white">
+          <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+          </svg>
+          <span>Советы</span>
+        </button>
+
+        <button id="nav-btn-history" onclick="App.switchTab('history')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[9px] transition hover:text-white">
+          <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span>История</span>
+        </button>
+
+        <button id="nav-btn-guardian" onclick="App.switchTab('guardian')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[9px] transition hover:text-violet-400">
+          <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          <span>Опекун</span>
+        </button>
+
+        <button id="nav-btn-settings" onclick="App.switchTab('settings')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[9px] transition hover:text-white">
+          <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          <span>Настройки</span>
+        </button>
+
+      </div>
+    </nav>
+
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL: SOS EMERGENCY ACTION & DIALOG -->
+  <!-- ======================================================== -->
+  <div id="modal-sos-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+    <div class="glass-card max-w-sm w-full rounded-3xl p-6 border border-rose-500/50 shadow-2xl text-center space-y-4">
+      <div class="w-14 h-14 mx-auto rounded-full bg-rose-600/20 border-2 border-rose-500 flex items-center justify-center text-rose-500">
+        <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+      </div>
+
+      <div>
+        <h3 class="text-base font-bold text-white">Экстренное оповещение</h3>
+        <p class="text-xs text-slate-300 mt-1" id="sos-dialog-description">
+          Зафиксировано повышенное напряжение сердечно-сосудистой системы. Проверьте самочувствие.
+        </p>
+      </div>
+
+      <div class="space-y-2 pt-2">
+        <a href="tel:103" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-red-700 text-white font-bold text-xs shadow-lg shadow-rose-600/30 transition flex items-center justify-center space-x-2">
+          <span>Вызов Скорой Помощи (103)</span>
+        </a>
+        <button onclick="App.closeSOSModal()" class="w-full py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs border border-slate-700 transition">
+          Закрыть
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- JAVASCRIPT: SUPPORTS BOTH DIRECT FILE:// OPENING AND WEB HOSTING -->
+  <!-- ======================================================== -->
+  <script src="./bundle.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "qamqor-health-monitor",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Экспериментальная система мониторинга физиологических показателей Qamqor",
+  "scripts": {
+    "start": "node server.js",
+    "build": "node build.js",
+    "test": "node build.js && node --test test/*.test.js"
+  },
+  "keywords": ["health", "iot", "biometrics", "ecg", "ble", "pwa"],
+  "author": "Qamqor Team",
+  "license": "MIT"
+}
