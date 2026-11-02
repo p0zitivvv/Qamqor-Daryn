@@ -815,97 +815,151 @@ export const App = {
   // ПОШАГОВАЯ АНКЕТА И ПРОФИЛЬ (4 ШАГА + СВОДКА)
   // ========================================================
   goToSurveyStep(step) {
-    this.state.currentSurveyStep = step;
+    try {
+      this.state.currentSurveyStep = step;
 
-    // Скрываем все панели и показываем активную
-    [1, 2, 3, 4, 5].forEach(s => {
-      const panel = document.getElementById(`survey-panel-step-${s}`);
-      if (panel) {
-        if (s === step) panel.classList.remove('hidden');
-        else panel.classList.add('hidden');
+      // Скрываем все панели и показываем только активную
+      for (let s = 1; s <= 5; s++) {
+        const panel = document.getElementById(`survey-panel-step-${s}`);
+        if (panel) {
+          if (s === step) {
+            panel.classList.remove('hidden');
+            panel.style.display = 'block';
+          } else {
+            panel.classList.add('hidden');
+            panel.style.display = 'none';
+          }
+        }
       }
-    });
 
-    const stepTitles = {
-      1: 'Основная информация',
-      2: 'Повседневные привычки',
-      3: 'Семейная история',
-      4: 'Подключение датчика',
-      5: 'Сводка готовности'
-    };
+      const stepTitles = {
+        1: 'Основная информация',
+        2: 'Повседневные привычки',
+        3: 'Семейная история',
+        4: 'Подключение датчика',
+        5: 'Сводка готовности'
+      };
 
-    const pillText = document.getElementById('survey-step-indicator-text');
-    const titleText = document.getElementById('survey-step-title-text');
-    const progressBar = document.getElementById('survey-progress-bar');
+      const pillText = document.getElementById('survey-step-indicator-text');
+      const titleText = document.getElementById('survey-step-title-text');
+      const progressBar = document.getElementById('survey-progress-bar');
 
-    if (pillText) {
-      pillText.textContent = step === 5 ? 'Сводка' : `Шаг ${step} из 4`;
+      if (pillText) {
+        pillText.textContent = step === 5 ? 'Сводка' : `Шаг ${step} из 4`;
+      }
+      if (titleText) {
+        titleText.textContent = stepTitles[step] || '';
+      }
+      if (progressBar) {
+        const percents = { 1: 25, 2: 50, 3: 75, 4: 95, 5: 100 };
+        progressBar.style.width = `${percents[step] || 25}%`;
+      }
+
+      try {
+        if (step === 1) {
+          this.populateStep1Inputs();
+          this.updateSurveyBMIPreview();
+        } else if (step === 2) {
+          this.refreshStep2Buttons();
+        } else if (step === 3) {
+          this.refreshStep3Buttons();
+        } else if (step === 4) {
+          this.updateSurveyDeviceStatus();
+        } else if (step === 5) {
+          this.renderSurveySummary();
+        }
+      } catch (subErr) {
+        console.warn('Sub-render error on step', step, subErr);
+      }
+
+      try {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch {
+        window.scrollTo(0, 0);
+      }
+    } catch (e) {
+      console.error('Error in goToSurveyStep:', e);
     }
-    if (titleText) {
-      titleText.textContent = stepTitles[step] || '';
-    }
-    if (progressBar) {
-      const percents = { 1: 25, 2: 50, 3: 75, 4: 95, 5: 100 };
-      progressBar.style.width = `${percents[step] || 25}%`;
-    }
-
-    if (step === 1) {
-      this.populateStep1Inputs();
-      this.updateSurveyBMIPreview();
-    } else if (step === 2) {
-      this.refreshStep2Buttons();
-    } else if (step === 3) {
-      this.refreshStep3Buttons();
-    } else if (step === 4) {
-      this.updateSurveyDeviceStatus();
-    } else if (step === 5) {
-      this.renderSurveySummary();
-    }
-
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   },
 
   nextSurveyStep(fromStep) {
-    if (fromStep === 1) {
-      const ageInput = document.getElementById('survey-input-age');
-      const heightInput = document.getElementById('survey-input-height');
-      const weightInput = document.getElementById('survey-input-weight');
-      const nameInput = document.getElementById('survey-input-name');
+    try {
+      if (fromStep === 1) {
+        const ageInput = document.getElementById('survey-input-age');
+        const heightInput = document.getElementById('survey-input-height');
+        const weightInput = document.getElementById('survey-input-weight');
+        const nameInput = document.getElementById('survey-input-name');
+        const errBox = document.getElementById('survey-step1-error-msg');
 
-      const ageVal = parseInt(ageInput ? ageInput.value : '', 10);
-      const heightVal = parseFloat(heightInput ? heightInput.value : '');
-      const weightVal = parseFloat(weightInput ? weightInput.value : '');
-      const nameVal = nameInput ? nameInput.value.trim() : '';
+        let ageRaw = (ageInput ? ageInput.value : '').trim();
+        let heightRaw = (heightInput ? heightInput.value : '').replace(',', '.').trim();
+        let weightRaw = (weightInput ? weightInput.value : '').replace(',', '.').trim();
+        let nameVal = nameInput ? nameInput.value.trim() : '';
 
-      if (isNaN(ageVal) || ageVal < 10 || ageVal > 110) {
-        this.showToast('Пожалуйста, укажите ваш возраст от 10 до 110 лет', 'warning');
-        if (ageInput) ageInput.focus();
-        return;
+        let ageVal = parseInt(ageRaw, 10);
+        let heightVal = parseFloat(heightRaw);
+        let weightVal = parseFloat(weightRaw);
+
+        // Безопасные значения по умолчанию, если пользователь оставил пустыми
+        if (isNaN(ageVal)) ageVal = 40;
+        if (isNaN(heightVal)) heightVal = 175;
+        if (isNaN(weightVal)) weightVal = 75;
+
+        // Если введены значения за пределами разумного диапазона
+        if (ageVal < 10 || ageVal > 110) {
+          if (errBox) {
+            errBox.textContent = 'Укажите возраст от 10 до 110 лет';
+            errBox.classList.remove('hidden');
+          }
+          this.showToast('Пожалуйста, укажите возраст от 10 до 110 лет', 'warning');
+          if (ageInput) ageInput.focus();
+          return;
+        }
+
+        if (heightVal < 50 || heightVal > 250) {
+          if (errBox) {
+            errBox.textContent = 'Укажите рост в см (от 50 до 250)';
+            errBox.classList.remove('hidden');
+          }
+          this.showToast('Пожалуйста, укажите рост в см (от 50 до 250)', 'warning');
+          if (heightInput) heightInput.focus();
+          return;
+        }
+
+        if (weightVal < 25 || weightVal > 300) {
+          if (errBox) {
+            errBox.textContent = 'Укажите вес в кг (от 25 до 300)';
+            errBox.classList.remove('hidden');
+          }
+          this.showToast('Пожалуйста, укажите вес в кг (от 25 до 300)', 'warning');
+          if (weightInput) weightInput.focus();
+          return;
+        }
+
+        if (errBox) errBox.classList.add('hidden');
+
+        // Вычисляем ИМТ безопасно
+        const hM = heightVal > 3.0 ? heightVal / 100.0 : heightVal;
+        const bmiVal = weightVal / (hM * hM);
+
+        this.state.surveyTemp.name = nameVal || 'Пользователь';
+        this.state.surveyTemp.age = ageVal;
+        this.state.surveyTemp.heightCm = heightVal;
+        this.state.surveyTemp.weightKg = weightVal;
+        this.state.surveyTemp.bmi = Math.round(bmiVal * 10) / 10;
+
+        this.goToSurveyStep(2);
+      } else if (fromStep === 2) {
+        this.goToSurveyStep(3);
+      } else if (fromStep === 3) {
+        this.goToSurveyStep(4);
+      } else if (fromStep === 4) {
+        this.goToSurveyStep(5);
       }
-      if (isNaN(heightVal) || heightVal < 50 || heightVal > 250) {
-        this.showToast('Пожалуйста, укажите рост в см (от 50 до 250)', 'warning');
-        if (heightInput) heightInput.focus();
-        return;
-      }
-      if (isNaN(weightVal) || weightVal < 25 || weightVal > 300) {
-        this.showToast('Пожалуйста, укажите вес в кг (от 25 до 300)', 'warning');
-        if (weightInput) weightInput.focus();
-        return;
-      }
-
-      this.state.surveyTemp.name = nameVal || 'Пользователь';
-      this.state.surveyTemp.age = ageVal;
-      this.state.surveyTemp.heightCm = heightVal;
-      this.state.surveyTemp.weightKg = weightVal;
-      this.state.surveyTemp.bmi = Math.round(calculateBMI(weightVal, heightVal) * 10) / 10;
-
-      this.goToSurveyStep(2);
-    } else if (fromStep === 2) {
-      this.goToSurveyStep(3);
-    } else if (fromStep === 3) {
-      this.goToSurveyStep(4);
-    } else if (fromStep === 4) {
-      this.goToSurveyStep(5);
+    } catch (err) {
+      console.error('Error in nextSurveyStep:', err);
+      // Гарантированный переход на следующий шаг даже при ошибке
+      this.goToSurveyStep((fromStep || 1) + 1);
     }
   },
 
@@ -1422,9 +1476,15 @@ export const App = {
     const isRed = evalRes.zone === 'red';
     const isYellow = evalRes.zone === 'yellow';
 
+    // Формируем текст предпросмотра сообщения
+    const previewMessage = this.getFormattedGuardianAlertMessage('red');
+    const previewDisplayHtml = previewMessage
+      .replace(/\n/g, '<br>')
+      .replace(/\*([^*]+)\*/g, '<b class="text-white">$1</b>');
+
     tab.innerHTML = `
       <div class="space-y-4">
-        <!-- Заголовок и пояснение сценария (Мама - Сын) -->
+        <!-- Шапка -->
         <div class="p-4 rounded-2xl bg-gradient-to-r from-violet-950/40 to-slate-900 border border-violet-500/30 text-xs text-slate-300 leading-relaxed flex items-start justify-between gap-3">
           <div class="space-y-1">
             <div class="flex items-center space-x-2">
@@ -1432,57 +1492,81 @@ export const App = {
               <span class="px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 text-[10px] font-bold">Сын / Врач</span>
             </div>
             <div class="text-slate-400 leading-normal">
-              Если браслет носит, например, <b>мама</b>, а сын или врач находится <b>в другом городе</b> — система автоматически пришлёт срочное оповещение при росте риска или ухудшении пульса.
+              Если браслет носит <b>мама</b>, а сын или врач находится <b>в другом городе</b> — система автоматически пришлёт срочный сигнал при росте риска или ухудшении пульса.
             </div>
           </div>
           <span class="text-3xl flex-shrink-0">👨‍⚕️</span>
         </div>
 
-        <!-- 1. Быстрый обмен данными с сыном / врачом прямо сейчас -->
-        <div class="glass-card rounded-2xl p-4 border border-cyan-500/30 bg-cyan-950/10 space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="text-xs font-bold text-cyan-300 uppercase tracking-wider">Поделиться состоянием с сыном / врачом</div>
-            <span class="text-[10px] font-mono text-cyan-400">В 1 клик</span>
+        <!-- КАРТОЧКА: ПРОВЕРКА ОТПРАВКИ И ПРЕДПРОСМОТР СООБЩЕНИЯ -->
+        <div class="glass-card rounded-2xl p-4 sm:p-5 border border-cyan-500/40 bg-gradient-to-br from-cyan-950/20 via-slate-900 to-slate-900 space-y-3.5">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+            <div class="flex items-center space-x-2">
+              <span class="w-6 h-6 rounded-lg bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-xs">📨</span>
+              <div>
+                <h3 class="text-xs sm:text-sm font-bold text-white">Проверка отправки в бот и текст сообщения</h3>
+                <p class="text-[10px] sm:text-[11px] text-slate-400">Проверьте, доходят ли сообщения опекуну, и посмотрите текст оповещения</p>
+              </div>
+            </div>
           </div>
 
-          <p class="text-xs text-slate-300">
-            Текущее состояние: <b>${patientName}</b> • Риск: <b class="${isRed ? 'text-rose-400' : isYellow ? 'text-amber-400' : 'text-emerald-400'}">${evalRes.index != null ? evalRes.index : 18}/100</b> • Пульс: <b>${this.state.bpm || 72} уд/мин</b>
-          </p>
+          <!-- Предпросмотр текста сообщения для Telegram -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-bold text-cyan-300 uppercase tracking-wider text-[11px]">💬 Какое сообщение отправляется в бот:</span>
+              <span class="text-[10px] text-slate-400 font-mono">Telegram Markdown</span>
+            </div>
+            <div class="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800 text-[11px] text-slate-300 font-mono leading-relaxed shadow-inner">
+              ${previewDisplayHtml}
+            </div>
+          </div>
+
+          <!-- Кнопка проверки доставки -->
+          <button id="btn-verify-telegram" onclick="App.verifyTelegramDelivery()" class="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 active:scale-98 transition flex items-center justify-center space-x-2">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+            <span>Проверить отправку в Telegram прямо сейчас</span>
+          </button>
+
+          <!-- Результат проверки в реальном времени -->
+          <div id="guardian-verify-result-box" class="hidden p-3 rounded-xl border text-xs leading-relaxed space-y-1.5"></div>
+        </div>
+
+        <!-- 1. Быстрый обмен данными с сыном / врачом -->
+        <div class="glass-card rounded-2xl p-4 border border-slate-800 space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="text-xs font-bold text-slate-300 uppercase tracking-wider">Поделиться состоянием</div>
+            <span class="text-[10px] font-mono text-emerald-400">В 1 клик</span>
+          </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <!-- Отправить в WhatsApp -->
             <button onclick="App.shareViaWhatsApp()" class="py-2.5 px-3 rounded-xl bg-emerald-600/90 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center space-x-2 transition shadow-md shadow-emerald-600/20">
               <span>💬 Отправить сводку в WhatsApp</span>
             </button>
-            <!-- Скопировать ссылку удалённого наблюдения -->
             <button onclick="App.copyGuardianShareLink()" class="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-semibold text-xs border border-cyan-700/50 flex items-center justify-center space-x-2 transition">
               <span>🔗 Скопировать ссылку для сына</span>
             </button>
           </div>
         </div>
 
-        <!-- 2. Настройки автоматических уведомлений (Telegram) -->
+        <!-- 2. Настройки опекуна (Telegram) -->
         <div class="glass-card rounded-2xl p-4 border border-slate-800 space-y-3">
           <div class="text-xs font-bold text-violet-400 uppercase tracking-wider">Настройки опекуна / врача</div>
 
-          <!-- Имя опекуна -->
           <div class="space-y-1">
-            <label class="block text-xs font-medium text-slate-300">Кто получает оповещения? <span class="text-slate-500">(например: Сын Арман, Доктор Карим)</span></label>
+            <label class="block text-xs font-medium text-slate-300">Имя опекуна <span class="text-slate-500">(например: Сын Арман, Врач Карим)</span></label>
             <input type="text" id="guardian-name" value="${cfg.name || ''}" placeholder="Сын Арман" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-violet-400">
           </div>
 
-          <!-- Телефон опекуна (для быстрого вызова) -->
           <div class="space-y-1">
-            <label class="block text-xs font-medium text-slate-300">Телефон опекуна <span class="text-slate-500">(для быстрого звонка или SMS)</span></label>
+            <label class="block text-xs font-medium text-slate-300">Телефон опекуна <span class="text-slate-500">(для быстрого звонка)</span></label>
             <input type="tel" id="guardian-phone" value="${cfg.phone || ''}" placeholder="+7 777 123 4567" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-violet-400">
           </div>
 
-          <!-- Telegram Bot Token & Chat ID -->
           <div class="p-3 rounded-xl bg-amber-950/20 border border-amber-700/30 text-[11px] text-amber-200 leading-relaxed space-y-1">
-            <div class="font-bold">⚡ Как настроить мгновенные Push-уведомления в Telegram сыну:</div>
-            <div>1. Сын открывает Telegram → находит <b>@BotFather</b> → отправляет <span class="font-mono">/newbot</span></div>
-            <div>2. Копирует полученный <b>Bot Token</b> сюда</div>
-            <div>3. Нажимает <span class="font-mono">/start</span> в своём новом боте, а в <b>@userinfobot</b> копирует свой <b>Chat ID</b></div>
+            <div class="font-bold">⚡ Как настроить Telegram-бота:</div>
+            <div>1. Откройте Telegram → найдите <b>@BotFather</b> → напишите <span class="font-mono">/newbot</span></div>
+            <div>2. Вставьте сюда полученный <b>Bot Token</b></div>
+            <div>3. Нажмите <span class="font-mono">/start</span> в вашем новом боте, а в <b>@userinfobot</b> узнайте свой <b>Chat ID</b></div>
           </div>
 
           <div class="space-y-1">
@@ -1495,53 +1579,21 @@ export const App = {
             <input type="text" id="guardian-chatid" value="${cfg.chatId || ''}" placeholder="987654321" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-violet-400">
           </div>
 
-          <!-- События для уведомлений -->
           <div class="space-y-2 pt-1">
-            <div class="text-xs font-medium text-slate-300">Когда присылать срочные сигналы сыну:</div>
-            <label class="flex items-center space-x-3 cursor-pointer p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+            <div class="text-xs font-medium text-slate-300">Когда присылать сигналы опекуну:</div>
+            <label class="flex items-center space-x-3 cursor-pointer p-2 rounded-xl bg-slate-900/80 border border-slate-800">
               <input type="checkbox" id="guardian-notify-red" ${cfg.notifyRed ? 'checked' : ''} class="w-4 h-4 accent-rose-500 cursor-pointer flex-shrink-0">
-              <span class="text-xs text-slate-300">🔴 <b>Красная зона риска:</b> индекс ≥ 40 (Срочно!)</span>
+              <span class="text-xs text-slate-300">🔴 <b>Красная зона:</b> индекс ≥ 40 (Срочно!)</span>
             </label>
-            <label class="flex items-center space-x-3 cursor-pointer p-2.5 rounded-xl bg-slate-900/80 border border-slate-800">
+            <label class="flex items-center space-x-3 cursor-pointer p-2 rounded-xl bg-slate-900/80 border border-slate-800">
               <input type="checkbox" id="guardian-notify-det" ${cfg.notifyDeterioration ? 'checked' : ''} class="w-4 h-4 accent-amber-500 cursor-pointer flex-shrink-0">
-              <span class="text-xs text-slate-300">🟡 <b>Ухудшение показателей:</b> резкий скачок пульса или падение кислорода</span>
+              <span class="text-xs text-slate-300">🟡 <b>Ухудшение:</b> резкий скачок пульса или падение кислорода</span>
             </label>
           </div>
 
           <button onclick="App.saveGuardianSettings()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-purple-700 hover:from-violet-500 hover:to-purple-600 text-white font-bold text-xs shadow-lg shadow-violet-500/20 transition">
             💾 Сохранить настройки опекуна
           </button>
-        </div>
-
-        <!-- 3. Тест и статус связи -->
-        <div class="glass-card rounded-2xl p-4 border border-slate-800 space-y-3">
-          <div class="text-xs font-bold text-cyan-400 uppercase tracking-wider">Статус и проверка связи</div>
-
-          <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1.5">
-            <div class="flex justify-between items-center">
-              <span class="text-slate-400">Опекун:</span>
-              <span class="text-slate-200 font-semibold">${cfg.name || 'Не задан'}</span>
-            </div>
-            <div class="flex justify-between items-center">
-              <span class="text-slate-400">Telegram:</span>
-              <span class="${cfg.botToken && cfg.chatId ? 'text-emerald-400' : 'text-slate-500'} font-semibold">
-                ${cfg.botToken && cfg.chatId ? '✅ Настроен и готов' : '❌ Не настроен'}
-              </span>
-            </div>
-            <div class="flex justify-between items-center">
-              <span class="text-slate-400">Последнее оповещение:</span>
-              <span class="text-slate-300 font-mono text-[11px]">${lastNotifStr}</span>
-            </div>
-          </div>
-
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button onclick="App.sendTestGuardianNotification()" class="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-semibold text-xs border border-cyan-700/40 transition flex items-center justify-center space-x-1.5">
-              <span>🧪 Тестовое оповещение в Telegram</span>
-            </button>
-            <button onclick="App.sendCurrentStatusNotification()" class="py-2.5 px-3 rounded-xl bg-violet-950/60 hover:bg-violet-900/60 text-violet-300 font-semibold text-xs border border-violet-700/40 transition flex items-center justify-center space-x-1.5">
-              <span>📤 Отправить текущий отчёт</span>
-            </button>
-          </div>
         </div>
       </div>
     `;
@@ -1764,4 +1816,8 @@ export const App = {
 
 // Экспорт в глобальную область для onclick-хэндлеров в HTML
 window.App = App;
-window.addEventListener('DOMContentLoaded', () => App.init());
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', () => App.init());
+} else {
+  App.init();
+}
