@@ -216,7 +216,7 @@
         <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
           <div class="flex items-center justify-between">
             <label class="block text-xs font-bold text-slate-200">Сколько вам лет? <span class="text-rose-400">*</span></label>
-            <button type="button" onclick="App.toggleWhyExplain('age')" class="text-[11px] text-cyan-400 hover:text-cyan-300 inline-flex items-center space-x-1">
+            <button type="button" onclick="toggleExplain('age')" class="text-[11px] text-cyan-400 hover:text-cyan-300 inline-flex items-center space-x-1">
               <span>💡 Почему мы спрашиваем?</span>
             </button>
           </div>
@@ -235,10 +235,10 @@
           <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
             <div class="flex items-center justify-between">
               <label class="block text-xs font-bold text-slate-200">Какой у вас рост? (см) <span class="text-rose-400">*</span></label>
-              <button type="button" onclick="App.toggleWhyExplain('height')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+              <button type="button" onclick="toggleExplain('height')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
             </div>
             <div class="text-[11px] text-slate-400">Например: 175 см</div>
-            <input type="number" id="survey-input-height" oninput="App.updateSurveyBMIPreview()" min="50" max="250" value="175" placeholder="175" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400">
+            <input type="number" id="survey-input-height" oninput="safeUpdateBMI()" min="50" max="250" value="175" placeholder="175" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400">
             <div id="why-explain-height" class="hidden mt-2 p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
               Рост используется вместе с весом для автоматического вычисления индекса массы тела (ИМТ). Мы не просим вас рассчитывать ИМТ самостоятельно.
             </div>
@@ -248,10 +248,10 @@
           <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
             <div class="flex items-center justify-between">
               <label class="block text-xs font-bold text-slate-200">Какой у вас вес? (кг) <span class="text-rose-400">*</span></label>
-              <button type="button" onclick="App.toggleWhyExplain('weight')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+              <button type="button" onclick="toggleExplain('weight')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
             </div>
             <div class="text-[11px] text-slate-400">Например: 75 кг</div>
-            <input type="number" id="survey-input-weight" oninput="App.updateSurveyBMIPreview()" min="25" max="300" value="75" placeholder="75" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400">
+            <input type="number" id="survey-input-weight" oninput="safeUpdateBMI()" min="25" max="300" value="75" placeholder="75" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400">
             <div id="why-explain-weight" class="hidden mt-2 p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
               Вес отражает массу тела. В сочетании с ростом он определяет базовую гемодинамическую нагрузку на миокард.
             </div>
@@ -301,19 +301,19 @@
               <div class="text-xs font-bold text-slate-200">Вы курите?</div>
               <div class="text-[11px] text-slate-400">Сигареты, электронные испарители, кальяны или стики</div>
             </div>
-            <button type="button" onclick="App.toggleWhyExplain('smoking')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+            <button type="button" onclick="toggleExplain('smoking')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
           </div>
           <div id="why-explain-smoking" class="hidden p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
             <b>Влияние фактора:</b> Курение повышает тонус периферических сосудов и снижает доставку кислорода к тканям. Выбор «Предпочитаю не отвечать» не приравнивается к отсутствию курения — система честно уведомит, что для полного расчета требуется этот параметр.
           </div>
           <div class="grid grid-cols-3 gap-2 pt-1">
-            <button type="button" id="opt-smoking-0" onclick="App.setSurveyChoice('smoking', 0)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-smoking-0" onclick="handleChoice('smoking', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               🌱 Не курю
             </button>
-            <button type="button" id="opt-smoking-1" onclick="App.setSurveyChoice('smoking', 1)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-smoking-1" onclick="handleChoice('smoking', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               🚬 Курю
             </button>
-            <button type="button" id="opt-smoking-unknown" onclick="App.setSurveyChoice('smoking', null)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-[10px] sm:text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-smoking-unknown" onclick="handleChoice('smoking', null, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-[10px] sm:text-xs font-medium text-center hover:bg-slate-700 transition">
               🔒 Не отвечать
             </button>
           </div>
@@ -329,19 +329,19 @@
               <div class="text-xs font-bold text-slate-200">Как часто вы испытываете стресс?</div>
               <div class="text-[11px] text-slate-400">Оцените ваше эмоциональное состояние за последний месяц</div>
             </div>
-            <button type="button" onclick="App.toggleWhyExplain('stress')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+            <button type="button" onclick="toggleExplain('stress')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
           </div>
           <div id="why-explain-stress" class="hidden p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
             <b>Влияние фактора:</b> Хронический стресс увеличивает выброс адреналина и кортизола, повышая частоту пульса и снижая вариабельность ритма (HRV).
           </div>
           <div class="grid grid-cols-3 gap-2 pt-1">
-            <button type="button" id="opt-stress-0" onclick="App.setSurveyChoice('stress', 0)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-stress-0" onclick="handleChoice('stress', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               😌 Редко
             </button>
-            <button type="button" id="opt-stress-1" onclick="App.setSurveyChoice('stress', 1)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-stress-1" onclick="handleChoice('stress', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               😐 Иногда (умеренно)
             </button>
-            <button type="button" id="opt-stress-2" onclick="App.setSurveyChoice('stress', 2)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-stress-2" onclick="handleChoice('stress', 2, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               😫 Почти каждый день
             </button>
           </div>
@@ -354,19 +354,19 @@
               <div class="text-xs font-bold text-slate-200">Насколько регулярно вы двигаетесь или тренируетесь?</div>
               <div class="text-[11px] text-slate-400">Прогулки, зарядка, фитнес, спорт или физический труд</div>
             </div>
-            <button type="button" onclick="App.toggleWhyExplain('activity')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+            <button type="button" onclick="toggleExplain('activity')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
           </div>
           <div id="why-explain-activity" class="hidden p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
             <b>Защитный фактор:</b> Регулярное движение укрепляет сердечную мышцу и сосуды. В математической модели физическая активность имеет отрицательный весовой коэффициент (−0.30·P) и снижает расчётный риск!
           </div>
           <div class="grid grid-cols-3 gap-2 pt-1">
-            <button type="button" id="opt-activity-0" onclick="App.setSurveyChoice('activity', 0)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-activity-0" onclick="handleChoice('activity', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               🪑 Почти не двигаюсь
             </button>
-            <button type="button" id="opt-activity-1" onclick="App.setSurveyChoice('activity', 1)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-activity-1" onclick="handleChoice('activity', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               🚶 Умеренно (прогулки)
             </button>
-            <button type="button" id="opt-activity-2" onclick="App.setSurveyChoice('activity', 2)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-activity-2" onclick="handleChoice('activity', 2, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               🏃 Регулярно занимаюсь
             </button>
           </div>
@@ -404,7 +404,7 @@
                 Инфаркт миокарда, инсульт или гипертония у родителей, родных братьев/сестёр или бабушек/дедушек.
               </div>
             </div>
-            <button type="button" onclick="App.toggleWhyExplain('familyHistory')" class="text-[11px] text-cyan-400 hover:text-cyan-300 whitespace-nowrap ml-2">
+            <button type="button" onclick="toggleExplain('familyHistory')" class="text-[11px] text-cyan-400 hover:text-cyan-300 whitespace-nowrap ml-2">
               💡 Зачем?
             </button>
           </div>
@@ -414,13 +414,13 @@
           </div>
 
           <div class="grid grid-cols-3 gap-2 pt-2">
-            <button type="button" id="opt-familyHistory-0" onclick="App.setSurveyChoice('familyHistory', 0)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-familyHistory-0" onclick="handleChoice('familyHistory', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               ❌ Нет
             </button>
-            <button type="button" id="opt-familyHistory-1" onclick="App.setSurveyChoice('familyHistory', 1)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-familyHistory-1" onclick="handleChoice('familyHistory', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               ⚠️ Да, были
             </button>
-            <button type="button" id="opt-familyHistory-unknown" onclick="App.setSurveyChoice('familyHistory', null)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
+            <button type="button" id="opt-familyHistory-unknown" onclick="handleChoice('familyHistory', null, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
               ❓ Не знаю
             </button>
           </div>
@@ -1022,7 +1022,7 @@
   <!-- ======================================================== -->
   <!-- JAVASCRIPT: SUPPORTS BOTH DIRECT FILE:// OPENING AND WEB HOSTING -->
   <!-- ======================================================== -->
-  <script src="./bundle.js?v=20261102_1635"></script>
+  <script src="./bundle.js?v=20261102_1645"></script>
 
 
   <!-- ======================================================== -->
@@ -1138,6 +1138,126 @@
       if (e) e.preventDefault();
       switchSurveyPanel(targetStep);
     }
+
+    // ============================================================
+    // INLINE ZERO-DEPENDENCY HELPERS
+    // Работают без App. — немедленно при клике, синхронизируют
+    // состояние с App если он уже загружен.
+    // ============================================================
+
+    var ACTIVE_BTN   = 'py-2.5 px-2 rounded-xl border border-cyan-500/70 bg-cyan-500/20 text-cyan-200 text-xs font-bold text-center ring-1 ring-cyan-400/40 shadow-sm transition';
+    var INACTIVE_BTN = 'py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-400 text-xs font-medium text-center hover:bg-slate-700 transition';
+
+    function handleChoice(field, val, btn) {
+      // 1. Сохраняем в window.surveyData
+      window.surveyData = window.surveyData || {};
+      window.surveyData[field] = val;
+
+      // 2. Синхронизируем с App если загружен
+      try {
+        if (window.App && window.App.state && window.App.state.surveyTemp) {
+          window.App.state.surveyTemp[field] = val;
+        }
+      } catch(e) {}
+
+      // 3. Мгновенное визуальное переключение кнопок в группе
+      if (btn && btn.parentElement) {
+        var siblings = btn.parentElement.querySelectorAll('button');
+        siblings.forEach(function(b) { b.className = INACTIVE_BTN; });
+        btn.className = ACTIVE_BTN;
+      }
+
+      // 4. Для курения — показываем/скрываем уведомление
+      if (field === 'smoking') {
+        var notice = document.getElementById('survey-smoking-notice');
+        if (notice) {
+          if (val === null || val === 'unknown') notice.classList.remove('hidden');
+          else notice.classList.add('hidden');
+        }
+      }
+
+      // 5. Для «Не знаю» семейной истории — показываем уведомление
+      if (field === 'familyHistory') {
+        var fNotice = document.getElementById('survey-family-notice');
+        if (fNotice) {
+          if (val === null) fNotice.classList.remove('hidden');
+          else fNotice.classList.add('hidden');
+        }
+      }
+    }
+
+    function toggleExplain(key) {
+      // Инлайн-аналог App.toggleWhyExplain — без зависимости от bundle
+      var el = document.getElementById('why-explain-' + key);
+      if (el) {
+        el.classList.toggle('hidden');
+      }
+      // Также вызываем App если загружен (чтобы состояние осталось синхронным)
+      try {
+        if (window.App && typeof window.App.toggleWhyExplain === 'function') {
+          // Не вызываем ещё раз (иначе двойной toggle), App уже синхронизируется DOM
+        }
+      } catch(e) {}
+    }
+
+    function safeUpdateBMI() {
+      // Обновляет превью ИМТ — работает без App
+      var hEl = document.getElementById('survey-input-height');
+      var wEl = document.getElementById('survey-input-weight');
+      var statusEl = document.getElementById('survey-bmi-preview-status');
+      var bBadge = document.getElementById('survey-bmi-b-badge');
+
+      var h = parseFloat(hEl ? hEl.value : '');
+      var w = parseFloat(wEl ? wEl.value : '');
+
+      if (!isNaN(h) && h >= 50 && h <= 250 && !isNaN(w) && w >= 25 && w <= 300) {
+        var bmi = w / ((h / 100) * (h / 100));
+        var bVal = (bmi - 25) / 5;
+        var category = 'Нормальная масса тела';
+        if (bmi < 18.5) category = 'Дефицит массы тела';
+        else if (bmi >= 25 && bmi < 30) category = 'Избыточная масса тела';
+        else if (bmi >= 30) category = 'Повышенная масса тела (ожирение)';
+        if (statusEl) statusEl.textContent = bmi.toFixed(1) + ' кг/м² • ' + category;
+        if (bBadge) bBadge.textContent = 'B = ' + (bVal >= 0 ? '+' : '') + bVal.toFixed(2);
+      } else {
+        if (statusEl) statusEl.textContent = 'Введите рост и вес для расчёта';
+        if (bBadge) bBadge.textContent = 'B = --';
+      }
+      // Также пробуем синхронизировать с App
+      try {
+        if (window.App && typeof window.App.updateSurveyBMIPreview === 'function') {
+          window.App.updateSurveyBMIPreview();
+        }
+      } catch(e) {}
+    }
+
+    // После загрузки DOM восстанавливаем визуальное состояние кнопок
+    document.addEventListener('DOMContentLoaded', function() {
+      // Восстанавливаем выделение кнопок из surveyData
+      var fields = ['smoking', 'stress', 'activity', 'familyHistory'];
+      fields.forEach(function(field) {
+        var val = window.surveyData[field];
+        var suffix = (val === null || val === undefined) ? 'unknown' : val;
+        var idMap = {
+          'smoking':       ['opt-smoking-0', 'opt-smoking-1', 'opt-smoking-unknown'],
+          'stress':        ['opt-stress-0', 'opt-stress-1', 'opt-stress-2'],
+          'activity':      ['opt-activity-0', 'opt-activity-1', 'opt-activity-2'],
+          'familyHistory': ['opt-familyHistory-0', 'opt-familyHistory-1', 'opt-familyHistory-unknown']
+        };
+        var ids = idMap[field] || [];
+        ids.forEach(function(id) {
+          var btn = document.getElementById(id);
+          if (!btn) return;
+          // Определяем значение кнопки по суффиксу id
+          var parts = id.split('-');
+          var btnSuffix = parts[parts.length - 1]; // '0', '1', '2', 'unknown'
+          var isActive = (btnSuffix === 'unknown')
+            ? (val === null || val === undefined || val === 'unknown')
+            : (String(val) === btnSuffix);
+          btn.className = isActive ? ACTIVE_BTN : INACTIVE_BTN;
+        });
+      });
+    });
   </script>
 
 </body>
