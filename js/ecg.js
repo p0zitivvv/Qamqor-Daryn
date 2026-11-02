@@ -39,6 +39,15 @@ export class ECGCanvasService {
 
   setStreamActive(active) {
     this.hasStream = active;
+    if (this.canvases.length === 0) {
+      this.init([
+        { canvasId: 'homeECGCanvas', emptyStateId: 'home-ecg-empty-state', statusPillId: 'home-ecg-status-pill' },
+        { canvasId: 'liveECGCanvas', emptyStateId: 'ecg-empty-state', statusPillId: 'ecg-status-pill' }
+      ]);
+    }
+    if (!this.animId) {
+      this.loop();
+    }
     this.canvases.forEach(item => {
       if (item.emptyState) {
         if (active) item.emptyState.classList.add('hidden');

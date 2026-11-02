@@ -968,35 +968,35 @@
     <nav class="fixed bottom-0 left-0 right-0 z-40 glass-nav border-t border-slate-800/80 px-1 py-2">
       <div class="max-w-lg mx-auto grid grid-cols-6 gap-0.5">
         
-        <button id="nav-btn-home" onclick="App.switchTab('home')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-emerald-400 font-semibold text-[10px] transition">
+        <button id="nav-btn-home" onclick="safeSwitchTab('home')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-emerald-400 font-semibold text-[10px] transition">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
           </svg>
           <span>Главная</span>
         </button>
 
-        <button id="nav-btn-metrics" onclick="App.switchTab('metrics')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
+        <button id="nav-btn-metrics" onclick="safeSwitchTab('metrics')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
           </svg>
           <span>ЭКГ</span>
         </button>
 
-        <button id="nav-btn-factors" onclick="App.switchTab('factors')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
+        <button id="nav-btn-factors" onclick="safeSwitchTab('factors')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
           </svg>
           <span>Советы</span>
         </button>
 
-        <button id="nav-btn-history" onclick="App.switchTab('history')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
+        <button id="nav-btn-history" onclick="safeSwitchTab('history')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
           </svg>
           <span>История</span>
         </button>
 
-        <button id="nav-btn-guardian" onclick="App.switchTab('guardian')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-violet-400">
+        <button id="nav-btn-guardian" onclick="safeSwitchTab('guardian')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-violet-400">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
             <circle cx="9" cy="7" r="4"/>
@@ -1006,7 +1006,7 @@
           <span>Опекун</span>
         </button>
 
-        <button id="nav-btn-settings" onclick="App.switchTab('settings')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
+        <button id="nav-btn-settings" onclick="safeSwitchTab('settings')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
@@ -1050,7 +1050,7 @@
   <!-- ======================================================== -->
   <!-- JAVASCRIPT: SUPPORTS BOTH DIRECT FILE:// OPENING AND WEB HOSTING -->
   <!-- ======================================================== -->
-  <script src="./bundle.js?v=20261102_1725"></script>
+  <script src="./bundle.js?v=20261102_1730"></script>
 
 
   <!-- ======================================================== -->
@@ -1262,6 +1262,42 @@
     function handleStepBack(targetStep, e) {
       if (e) e.preventDefault();
       switchSurveyPanel(targetStep);
+    }
+
+    function safeSwitchTab(tabId) {
+      if (window.App && typeof window.App.switchTab === 'function') {
+        try {
+          window.App.switchTab(tabId);
+          return;
+        } catch(err) {
+          console.warn('App.switchTab error, using inline fallback:', err);
+        }
+      }
+      // Direct DOM fallback for tab switching:
+      var tabs = ['home', 'metrics', 'factors', 'history', 'settings', 'guardian'];
+      tabs.forEach(function(t) {
+        var sec = document.getElementById('tab-' + t);
+        var btn = document.getElementById('nav-btn-' + t);
+        if (sec) {
+          if (t === tabId) {
+            sec.classList.remove('hidden');
+            sec.style.display = 'block';
+          } else {
+            sec.classList.add('hidden');
+            sec.style.display = 'none';
+          }
+        }
+        if (btn) {
+          if (t === tabId) {
+            btn.classList.add(t === 'guardian' ? 'text-violet-400' : 'text-emerald-400', 'font-semibold');
+            btn.classList.remove('text-slate-400', 'font-medium');
+          } else {
+            btn.classList.remove('text-emerald-400', 'text-violet-400', 'font-semibold');
+            btn.classList.add('text-slate-400', 'font-medium');
+          }
+        }
+      });
+      try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch(e) {}
     }
 
     // ============================================================

@@ -207,8 +207,13 @@ export const App = {
       const sec = document.getElementById(`tab-${t}`);
       const btn = document.getElementById(`nav-btn-${t}`);
       if (sec) {
-        if (t === tabId) sec.classList.remove('hidden');
-        else sec.classList.add('hidden');
+        if (t === tabId) {
+          sec.classList.remove('hidden');
+          sec.style.display = 'block';
+        } else {
+          sec.classList.add('hidden');
+          sec.style.display = 'none';
+        }
       }
       if (btn) {
         if (t === tabId) {
@@ -223,14 +228,21 @@ export const App = {
       }
     });
 
-    if (tabId === 'history') {
-      this.renderHistoryList();
-    } else if (tabId === 'factors') {
-      this.renderFactorsTab();
-    } else if (tabId === 'guardian') {
-      this.renderGuardianTab();
+    try {
+      if (tabId === 'history') {
+        this.renderHistoryList();
+      } else if (tabId === 'factors') {
+        this.renderFactorsTab();
+      } else if (tabId === 'guardian') {
+        this.renderGuardianTab();
+      } else if (tabId === 'settings') {
+        this.populateSettingsTab();
+      }
+    } catch(err) {
+      console.warn('Error rendering tab content:', tabId, err);
     }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch(e) {}
   },
 
   // ========================================================
@@ -492,12 +504,12 @@ export const App = {
   // ОТРИСОВКА ИНТЕРФЕЙСА
   // ========================================================
   renderAll() {
-    this.updateConnectionUI();
-    this.renderDashboardMetrics();
-    this.renderFactorsTab();
-    this.renderHistoryList();
-    this.populateSettingsTab();
-    this.renderGuardianTab();
+    try { this.updateConnectionUI(); } catch(e) { console.warn('updateConnectionUI err:', e); }
+    try { this.renderDashboardMetrics(); } catch(e) { console.warn('renderDashboardMetrics err:', e); }
+    try { this.renderFactorsTab(); } catch(e) { console.warn('renderFactorsTab err:', e); }
+    try { this.renderHistoryList(); } catch(e) { console.warn('renderHistoryList err:', e); }
+    try { this.populateSettingsTab(); } catch(e) { console.warn('populateSettingsTab err:', e); }
+    try { this.renderGuardianTab(); } catch(e) { console.warn('renderGuardianTab err:', e); }
   },
 
   renderDashboardMetrics() {
@@ -1631,6 +1643,101 @@ export const App = {
     };
     this.saveGuardianConfig(cfg);
     this.showToast('Настройки опекуна сохранены', 'success');
+  },
+
+  getFormattedGuardianAlertMessage(scenario = 'red') {
+    const profile = StorageService.getProfile();
+    const patientName = (profile && profile.name) ? profile.name : 'Мама';
+    const bpm = this.state.bpm || 112;
+    const spo2 = this.state.spo2 || 94;
+    const idx = (this.state.modelEvaluation && this.state.modelEvaluation.index != null) ? this.state.modelEvaluation.index : (scenario === 'red' ? 46 : 28);
+    const isRed = scenario === 'red' || idx >= 40;
+    const emoji = isRed ? '🔴' : '🟡';
+    const statusText = isRed ? 'ВЫСОКИЙ РИСК: Индекс кардио-напряжения ≥ 40' : 'Внимание: Умеренное отклонение показателей';
+
+    return `${emoji} *Срочное оповещение Qamqor:* ${statusText}\n\n` +
+      `👤 *Пациент:* ${patientName}\n` +
+      `📊 *Индекс риска:* ${idx} / 100 (${isRed ? 'Красная зона' : 'Жёлтая зона'})\n` +
+      `❤️ *Пульс (ЧСС):* ${bpm} уд/мин\n` +
+      `🩸 *Кислород SpO2:* ${spo2}%\n\n` +
+      `⚠️ *Рекомендация:* Свяжитесь с близким человеком, убедитесь в хорошем самочувствии или вызовите помощь.`;
+  },
+
+  async verifyTelegramDelivery() {
+    const tokenInput = document.getElementById('guardian-token');
+    const chatInput = document.getElementById('guardian-chatid');
+    const resultBox = document.getElementById('guardian-verify-result-box');
+    const btn = document.getElementById('btn-verify-telegram');
+
+    const token = tokenInput ? tokenInput.value.trim() : '';
+    const chatId = chatInput ? chatInput.value.trim() : '';
+
+    if (!token || !chatId) {
+      if (resultBox) {
+        resultBox.className = 'p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 text-xs leading-relaxed space-y-1';
+        resultBox.innerHTML = '❌ <b>Сначала введите Bot Token и Chat ID</b> в полях ниже, затем нажмите проверку.';
+        resultBox.classList.remove('hidden');
+      }
+      this.showToast('Заполните Bot Token и Chat ID', 'warning');
+      return;
+    }
+
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '⏳ Проверяем связь с Telegram...';
+    }
+
+    if (resultBox) {
+      resultBox.className = 'p-3 rounded-xl border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 text-xs leading-relaxed space-y-1';
+      resultBox.innerHTML = '⏳ Отправляем тестовое сообщение через API Telegram...';
+      resultBox.classList.remove('hidden');
+    }
+
+    const testMsg = this.getFormattedGuardianAlertMessage('red');
+    const now = new Date().toLocaleString('ru-RU');
+    const fullText = `🔔 *Тестовая проверка связи Qamqor*\n\n` +
+      `Бот успешно подключён к системе мониторинга!\n\n` +
+      `Вот так будет выглядеть экстренное сообщение опекуну:\n` +
+      `-----------------------------------------\n` +
+      testMsg + `\n` +
+      `-----------------------------------------\n` +
+      `⏰ Время отправки: ${now}`;
+
+    try {
+      const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, text: fullText, parse_mode: 'Markdown' })
+      });
+      const data = await resp.json();
+
+      if (data.ok) {
+        localStorage.setItem('qamqor_v3_guardian_last_notif', Date.now().toString());
+        this.saveGuardianSettings();
+        if (resultBox) {
+          resultBox.className = 'p-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-xs leading-relaxed space-y-1.5';
+          resultBox.innerHTML = `✅ <b>Сообщение успешно доставлено в Telegram!</b><br>ID сообщения в чате: <span class="font-mono text-white">#${data.result.message_id}</span>. Проверьте ваш Telegram.`;
+        }
+        this.showToast('✅ Сообщение доставлено в Telegram!', 'success');
+      } else {
+        if (resultBox) {
+          resultBox.className = 'p-3 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-300 text-xs leading-relaxed space-y-1.5';
+          resultBox.innerHTML = `❌ <b>Ошибка Telegram API:</b> ${data.description || 'Не удалось доставить'}.<br><span class="text-slate-400">Проверьте: 1) Нажали ли вы /start в боте? 2) Верно ли скопирован chat_id?</span>`;
+        }
+        this.showToast('Ошибка Telegram: ' + (data.description || 'Проверьте данные'), 'warning');
+      }
+    } catch(err) {
+      if (resultBox) {
+        resultBox.className = 'p-3 rounded-xl border border-rose-500/40 bg-rose-500/10 text-rose-300 text-xs leading-relaxed space-y-1.5';
+        resultBox.innerHTML = `❌ <b>Сетевая ошибка:</b> ${err.message}. Проверьте интернет.`;
+      }
+      this.showToast('Сетевая ошибка при отправке', 'warning');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg><span>Проверить отправку в Telegram прямо сейчас</span>`;
+      }
+    }
   },
 
   async sendGuardianNotification(message) {
