@@ -80,6 +80,16 @@
       border-top: 1px solid rgba(255, 255, 255, 0.08);
     }
     .ecg-canvas-bg { background: #060b13; }
+    /* Mobile touch targets — minimum 44px */
+    button { min-height: 36px; }
+    nav button { min-height: 44px; }
+    /* Prevent text selection on mobile */
+    * { -webkit-tap-highlight-color: transparent; }
+    /* Safe area for iPhone notch */
+    body { padding-bottom: env(safe-area-inset-bottom); }
+    nav { padding-bottom: calc(env(safe-area-inset-bottom) + 8px); }
+    /* Main content bottom padding accounts for nav */
+    main { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
   </style>
 </head>
 <body class="min-h-screen text-slate-100 flex flex-col justify-between selection:bg-emerald-500/30 selection:text-emerald-300">
@@ -88,6 +98,23 @@
   <!-- TOAST NOTIFICATION CONTAINER -->
   <!-- ======================================================== -->
   <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full px-4"></div>
+
+  <!-- PWA Install Banner -->
+  <div id="pwa-install-banner" class="hidden fixed bottom-20 left-4 right-4 z-50">
+    <div class="glass-card rounded-2xl p-3 border border-cyan-500/30 flex items-center justify-between shadow-xl">
+      <div class="flex items-center space-x-2">
+        <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-700 flex items-center justify-center text-white text-xs font-bold">Q</div>
+        <div>
+          <div class="text-xs font-bold text-white">Установить Qamqor</div>
+          <div class="text-[10px] text-slate-400">Добавить на главный экран</div>
+        </div>
+      </div>
+      <div class="flex items-center space-x-2">
+        <button id="pwa-install-btn" class="text-[11px] px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold">Установить</button>
+        <button onclick="document.getElementById('pwa-install-banner').classList.add('hidden')" class="text-[11px] text-slate-400">✕</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ======================================================== -->
   <!-- SCREEN 1: ONBOARDING — ЭТАП 1: ПОДКЛЮЧЕНИЕ БРАСЛЕТА -->
@@ -160,7 +187,7 @@
         <span>Быстрый запуск демо-версии (без датчика)</span>
       </button>
 
-      <button id="btn-onboarding-connect" onclick="App.bleService.connect().then(() => { App.showToast('Браслет подключен!', 'success'); setTimeout(() => App.startSurveyWizard(), 500); }).catch(e => { if (e.name !== 'NotFoundError') alert(e.message); })" class="w-full flex items-center justify-center space-x-2 py-2.5 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold text-xs border border-slate-700 transition">
+      <button id="btn-onboarding-connect" onclick="safeBLEConnect(false)" class="w-full flex items-center justify-center space-x-2 py-2.5 px-5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white font-semibold text-xs border border-slate-700 transition">
         <svg class="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="m7 7 10 10-5 5V2l5 5L7 17"/>
         </svg>
@@ -176,7 +203,7 @@
   <!-- ======================================================== -->
   <!-- SCREEN 2: ONBOARDING — ПОШАГОВАЯ АНКЕТА (4 ШАГА + СВОДКА) -->
   <!-- ======================================================== -->
-  <section id="screen-onboarding-survey" class="flex-1 flex flex-col justify-start p-4 sm:p-6 max-w-xl mx-auto w-full my-auto">
+  <section id="screen-onboarding-survey" class="flex-1 flex flex-col p-4 sm:p-6 max-w-xl mx-auto w-full overflow-y-auto">
     
     <!-- Top Step Header & Progress Indicator -->
     <div class="w-full mb-4">
@@ -497,7 +524,7 @@
 
         <!-- Connection Buttons -->
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <button type="button" onclick="App.bleService.connect().then(() => { App.showToast('Браслет подключен!', 'success'); App.updateSurveyDeviceStatus(); }).catch(e => { if (e.name !== 'NotFoundError') alert(e.message); })" class="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 flex items-center justify-center space-x-2 transition">
+          <button id="btn-survey-ble-connect" type="button" onclick="safeBLEConnect(true)" class="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 flex items-center justify-center space-x-2 transition">
             <svg class="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="m7 7 10 10-5 5V2l5 5L7 17"/>
             </svg>
@@ -593,6 +620,7 @@
             <div class="flex items-center space-x-1.5 text-[11px] text-slate-400">
               <span id="app-connection-indicator-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
               <span id="app-connection-indicator-text">Не подключено</span>
+              <button id="header-ble-btn" onclick="safeBLEConnect(false)" class="hidden text-[10px] px-2 py-0.5 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-white font-semibold transition">📶 Подключить</button>
               <span>•</span>
               <span id="app-last-sync-time" class="font-mono text-slate-500">Синхр: --:--</span>
             </div>
@@ -940,35 +968,35 @@
     <nav class="fixed bottom-0 left-0 right-0 z-40 glass-nav border-t border-slate-800/80 px-1 py-2">
       <div class="max-w-lg mx-auto grid grid-cols-6 gap-0.5">
         
-        <button id="nav-btn-home" onclick="App.switchTab('home')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-emerald-400 font-semibold text-[9px] transition">
+        <button id="nav-btn-home" onclick="App.switchTab('home')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-emerald-400 font-semibold text-[10px] transition">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
           </svg>
           <span>Главная</span>
         </button>
 
-        <button id="nav-btn-metrics" onclick="App.switchTab('metrics')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[9px] transition hover:text-white">
+        <button id="nav-btn-metrics" onclick="App.switchTab('metrics')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
           </svg>
           <span>ЭКГ</span>
         </button>
 
-        <button id="nav-btn-factors" onclick="App.switchTab('factors')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[9px] transition hover:text-white">
+        <button id="nav-btn-factors" onclick="App.switchTab('factors')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
           </svg>
           <span>Советы</span>
         </button>
 
-        <button id="nav-btn-history" onclick="App.switchTab('history')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[9px] transition hover:text-white">
+        <button id="nav-btn-history" onclick="App.switchTab('history')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
           </svg>
           <span>История</span>
         </button>
 
-        <button id="nav-btn-guardian" onclick="App.switchTab('guardian')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[9px] transition hover:text-violet-400">
+        <button id="nav-btn-guardian" onclick="App.switchTab('guardian')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-violet-400">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
             <circle cx="9" cy="7" r="4"/>
@@ -978,7 +1006,7 @@
           <span>Опекун</span>
         </button>
 
-        <button id="nav-btn-settings" onclick="App.switchTab('settings')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[9px] transition hover:text-white">
+        <button id="nav-btn-settings" onclick="App.switchTab('settings')" class="flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-400 font-medium text-[10px] transition hover:text-white">
           <svg class="w-5 h-5 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
@@ -1022,7 +1050,7 @@
   <!-- ======================================================== -->
   <!-- JAVASCRIPT: SUPPORTS BOTH DIRECT FILE:// OPENING AND WEB HOSTING -->
   <!-- ======================================================== -->
-  <script src="./bundle.js?v=20261102_1645"></script>
+  <script src="./bundle.js?v=20261102_1700"></script>
 
 
   <!-- ======================================================== -->
@@ -1257,6 +1285,90 @@
           btn.className = isActive ? ACTIVE_BTN : INACTIVE_BTN;
         });
       });
+    });
+  </script>
+
+  <script>
+    // ============================================================
+    // safeBLEConnect — улучшенное подключение по Bluetooth
+    // ============================================================
+    function safeBLEConnect(fromSurvey) {
+      var btn = fromSurvey
+        ? document.getElementById('btn-survey-ble-connect')
+        : document.getElementById('btn-onboarding-connect');
+
+      if (!('bluetooth' in navigator)) {
+        alert('❌ Web Bluetooth не поддерживается.\n\nИспользуйте Chrome или Edge на компьютере или Android.\n\niOS Safari не поддерживает Web Bluetooth.');
+        return;
+      }
+      if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        alert('❌ Для Bluetooth требуется HTTPS.\n\nОткройте сайт по адресу https://...');
+        return;
+      }
+
+      // Show loading state
+      if (btn) {
+        btn.disabled = true;
+        btn.dataset.originalText = btn.innerHTML;
+        btn.innerHTML = '<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span>Поиск браслета...</span>';
+      }
+
+      var connectPromise;
+      if (window.App && window.App.bleService) {
+        connectPromise = window.App.bleService.connect();
+      } else {
+        if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.originalText || btn.innerHTML; }
+        alert('Приложение ещё загружается. Попробуйте снова.');
+        return;
+      }
+
+      connectPromise.then(function(deviceName) {
+        if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.originalText; }
+        if (window.App) {
+          window.App.showToast('✅ ' + (deviceName || 'Браслет') + ' подключён!', 'success');
+          if (fromSurvey) {
+            window.App.updateSurveyDeviceStatus && window.App.updateSurveyDeviceStatus();
+          } else {
+            setTimeout(function() { window.App.startSurveyWizard(); }, 600);
+          }
+        }
+      }).catch(function(err) {
+        if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.originalText; }
+        if (err.name === 'NotFoundError') return; // user cancelled
+        var msg = '❌ Ошибка подключения:\n\n';
+        if (err.message && err.message.includes('HTTPS')) {
+          msg += 'Требуется HTTPS соединение.';
+        } else if (err.message && err.message.includes('Bluetooth')) {
+          msg += 'Убедитесь что Bluetooth включён на вашем устройстве.';
+        } else {
+          msg += err.message + '\n\nПроверьте:\n• Браслет включён и заряжен\n• Вы находитесь рядом с браслетом\n• Bluetooth включён';
+        }
+        alert(msg);
+      });
+    }
+
+    // ============================================================
+    // PWA "Add to Home Screen" banner
+    // ============================================================
+    var pwaInstallPrompt = null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+      e.preventDefault();
+      pwaInstallPrompt = e;
+      var banner = document.getElementById('pwa-install-banner');
+      if (banner) banner.classList.remove('hidden');
+      var btn = document.getElementById('pwa-install-btn');
+      if (btn) {
+        btn.addEventListener('click', function() {
+          if (pwaInstallPrompt) {
+            pwaInstallPrompt.prompt();
+            pwaInstallPrompt.userChoice.then(function() {
+              pwaInstallPrompt = null;
+              var b = document.getElementById('pwa-install-banner');
+              if (b) b.classList.add('hidden');
+            });
+          }
+        });
+      }
     });
   </script>
 

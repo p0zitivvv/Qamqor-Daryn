@@ -3176,6 +3176,15 @@ const App = {
       if (label) label.textContent = 'Не подключено';
       if (demoBar) demoBar.classList.add('hidden');
     }
+
+    const headerBleBtn = document.getElementById('header-ble-btn');
+    if (headerBleBtn) {
+      if (this.state.isConnected || this.state.isDemo) {
+        headerBleBtn.classList.add('hidden');
+      } else {
+        headerBleBtn.classList.remove('hidden');
+      }
+    }
   },
 
   // ========================================================
