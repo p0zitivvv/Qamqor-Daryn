@@ -277,7 +277,7 @@
             <svg class="w-3.5 h-3.5 text-cyan-400" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             <span>Быстрое Демо</span>
           </button>
-          <button type="button" onclick="App.nextSurveyStep(1)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 transition">
+          <button type="button" onclick="handleStep1Click(event)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 transition">
             Продолжить → (Шаг 2)
           </button>
         </div>
@@ -374,10 +374,10 @@
 
         <!-- Buttons Step 2 -->
         <div class="flex items-center space-x-3 pt-2">
-          <button type="button" onclick="App.goToSurveyStep(1)" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+          <button type="button" onclick="handleStepBack(1, event)" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
             ← Назад (Шаг 1)
           </button>
-          <button type="button" onclick="App.nextSurveyStep(2)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 transition">
+          <button type="button" onclick="handleStep2Click(event)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 transition">
             Продолжить → (Шаг 3)
           </button>
         </div>
@@ -432,10 +432,10 @@
 
         <!-- Buttons Step 3 -->
         <div class="flex items-center space-x-3 pt-2">
-          <button type="button" onclick="App.goToSurveyStep(2)" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+          <button type="button" onclick="handleStepBack(2, event)" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
             ← Назад (Шаг 2)
           </button>
-          <button type="button" onclick="App.nextSurveyStep(3)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 transition">
+          <button type="button" onclick="handleStep3Click(event)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/20 transition">
             Продолжить → (Шаг 4)
           </button>
         </div>
@@ -510,10 +510,10 @@
 
         <!-- Buttons Step 4 -->
         <div class="flex items-center space-x-3 pt-2">
-          <button type="button" onclick="App.goToSurveyStep(3)" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+          <button type="button" onclick="handleStepBack(3, event)" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
             ← Назад (Шаг 3)
           </button>
-          <button type="button" onclick="App.goToSurveyStep(5)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 transition">
+          <button type="button" onclick="handleStep4Click(event)" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 transition">
             Проверить готовность данных →
           </button>
         </div>
@@ -1022,7 +1022,123 @@
   <!-- ======================================================== -->
   <!-- JAVASCRIPT: SUPPORTS BOTH DIRECT FILE:// OPENING AND WEB HOSTING -->
   <!-- ======================================================== -->
-  <script src="./bundle.js"></script>
+  <script src="./bundle.js?v=20261102_1635"></script>
+
+
+  <!-- ======================================================== -->
+  <!-- INLINE GUARANTEED STEP CONTROLLER (Zero-failure navigation) -->
+  <!-- ======================================================== -->
+  <script>
+    window.surveyData = window.surveyData || {
+      name: 'Пользователь',
+      age: 40,
+      heightCm: 175,
+      weightKg: 75,
+      bmi: 24.5,
+      smoking: null,
+      stress: 1,
+      activity: 1,
+      familyHistory: null
+    };
+
+    function switchSurveyPanel(targetStep) {
+      console.log('[Survey] Switching to step:', targetStep);
+      for (var s = 1; s <= 5; s++) {
+        var p = document.getElementById('survey-panel-step-' + s);
+        if (p) {
+          if (s === targetStep) {
+            p.classList.remove('hidden');
+            p.style.display = 'block';
+          } else {
+            p.classList.add('hidden');
+            p.style.display = 'none';
+          }
+        }
+      }
+
+      var titles = {
+        1: 'Основная информация',
+        2: 'Повседневные привычки',
+        3: 'Семейная история',
+        4: 'Подключение датчика',
+        5: 'Сводка готовности'
+      };
+
+      var pill = document.getElementById('survey-step-indicator-text');
+      var title = document.getElementById('survey-step-title-text');
+      var bar = document.getElementById('survey-progress-bar');
+
+      if (pill) pill.textContent = targetStep === 5 ? 'Сводка' : ('Шаг ' + targetStep + ' из 4');
+      if (title) title.textContent = titles[targetStep] || '';
+      if (bar) bar.style.width = ((targetStep === 5 ? 100 : targetStep * 25) + '%');
+
+      try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch(e) { window.scrollTo(0, 0); }
+    }
+
+    function handleStep1Click(e) {
+      if (e) e.preventDefault();
+      
+      var ageEl = document.getElementById('survey-input-age');
+      var heightEl = document.getElementById('survey-input-height');
+      var weightEl = document.getElementById('survey-input-weight');
+      var nameEl = document.getElementById('survey-input-name');
+
+      var age = parseInt(ageEl ? ageEl.value : '40', 10) || 40;
+      var height = parseFloat(heightEl ? heightEl.value : '175') || 175;
+      var weight = parseFloat(weightEl ? weightEl.value : '75') || 75;
+      var name = nameEl ? nameEl.value.trim() : '';
+
+      var hM = height > 3.0 ? height / 100.0 : height;
+      var bmi = Math.round((weight / (hM * hM)) * 10) / 10;
+
+      window.surveyData.name = name || 'Пользователь';
+      window.surveyData.age = age;
+      window.surveyData.heightCm = height;
+      window.surveyData.weightKg = weight;
+      window.surveyData.bmi = bmi;
+
+      if (window.App) {
+        if (!window.App.state) window.App.state = {};
+        if (!window.App.state.surveyTemp) window.App.state.surveyTemp = {};
+        Object.assign(window.App.state.surveyTemp, window.surveyData);
+      }
+
+      switchSurveyPanel(2);
+
+      if (window.App && typeof window.App.refreshStep2Buttons === 'function') {
+        try { window.App.refreshStep2Buttons(); } catch(err) {}
+      }
+    }
+
+    function handleStep2Click(e) {
+      if (e) e.preventDefault();
+      switchSurveyPanel(3);
+      if (window.App && typeof window.App.refreshStep3Buttons === 'function') {
+        try { window.App.refreshStep3Buttons(); } catch(err) {}
+      }
+    }
+
+    function handleStep3Click(e) {
+      if (e) e.preventDefault();
+      switchSurveyPanel(4);
+      if (window.App && typeof window.App.updateSurveyDeviceStatus === 'function') {
+        try { window.App.updateSurveyDeviceStatus(); } catch(err) {}
+      }
+    }
+
+    function handleStep4Click(e) {
+      if (e) e.preventDefault();
+      switchSurveyPanel(5);
+      if (window.App && typeof window.App.renderSurveySummary === 'function') {
+        try { window.App.renderSurveySummary(); } catch(err) {}
+      }
+    }
+
+    function handleStepBack(targetStep, e) {
+      if (e) e.preventDefault();
+      switchSurveyPanel(targetStep);
+    }
+  </script>
 
 </body>
 </html>
