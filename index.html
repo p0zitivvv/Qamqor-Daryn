@@ -243,16 +243,16 @@
         <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
           <div class="flex items-center justify-between">
             <label class="block text-xs font-bold text-slate-200">Сколько вам лет? <span class="text-rose-400">*</span></label>
-            <button type="button" onclick="toggleExplain('age')" class="text-[11px] text-cyan-400 hover:text-cyan-300 inline-flex items-center space-x-1">
-              <span>💡 Почему мы спрашиваем?</span>
+            <button type="button" onclick="toggleExplain('age')" class="text-[11px] text-cyan-400 hover:text-cyan-300 inline-flex items-center space-x-1" aria-label="Почему мы спрашиваем возраст?">
+              <span aria-hidden="true">💡</span><span>Почему мы спрашиваем?</span>
             </button>
           </div>
           <div class="text-[11px] text-slate-400">Например: 35 лет. Допустимый диапазон от 10 до 110 лет.</div>
           <input type="number" id="survey-input-age" min="10" max="110" value="40" placeholder="40" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400">
           
-          <div id="why-explain-age" class="hidden mt-2 p-2.5 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
-            <b>Зачем это модели:</b> С возрастом естественные параметры эластичности сосудов и базовые границы пульса меняются. Модель нормализует возраст по формуле \(A = (Возраст - 40) / 10\), чтобы не сравнивать вас с абстрактным человеком, а откалибровать индивидуальные границы.
-          </div>
+<div id="why-explain-age" class="hidden mt-2 p-2.5 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
+              <b>Зачем это модели:</b> С возрастом естественные параметры эластичности сосудов и базовые границы пульса меняются. Модель нормализует возраст по формуле: A = (Возраст − 40) / 10, чтобы не сравнивать вас с абстрактным человеком, а откалибровать индивидуальные границы.
+            </div>
         </div>
 
         <!-- Вопрос 2 и 3: Рост и Вес -->
@@ -262,7 +262,7 @@
           <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
             <div class="flex items-center justify-between">
               <label class="block text-xs font-bold text-slate-200">Какой у вас рост? (см) <span class="text-rose-400">*</span></label>
-              <button type="button" onclick="toggleExplain('height')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+              <button type="button" onclick="toggleExplain('height')" class="text-[11px] text-cyan-400 hover:text-cyan-300" aria-label="Зачем спрашивают рост?"><span aria-hidden="true">💡</span> Зачем?</button>
             </div>
             <div class="text-[11px] text-slate-400">Например: 175 см</div>
             <input type="number" id="survey-input-height" oninput="safeUpdateBMI()" min="50" max="250" value="175" placeholder="175" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400">
@@ -273,10 +273,10 @@
 
           <!-- Вес -->
           <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
-            <div class="flex items-center justify-between">
-              <label class="block text-xs font-bold text-slate-200">Какой у вас вес? (кг) <span class="text-rose-400">*</span></label>
-              <button type="button" onclick="toggleExplain('weight')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
-            </div>
+<div class="flex items-center justify-between">
+            <label class="block text-xs font-bold text-slate-200">Какой у вас вес? (кг) <span class="text-rose-400">*</span></label>
+            <button type="button" onclick="toggleExplain('weight')" class="text-[11px] text-cyan-400 hover:text-cyan-300" aria-label="Зачем спрашивают вес?"><span aria-hidden="true">💡</span> Зачем?</button>
+          </div>
             <div class="text-[11px] text-slate-400">Например: 75 кг</div>
             <input type="number" id="survey-input-weight" oninput="safeUpdateBMI()" min="25" max="300" value="75" placeholder="75" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-cyan-400">
             <div id="why-explain-weight" class="hidden mt-2 p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
@@ -289,10 +289,9 @@
         <!-- Live BMI Calculation Display -->
         <div id="survey-bmi-preview-box" class="p-3 rounded-xl bg-slate-950 border border-cyan-500/30 flex items-center justify-between text-xs">
           <div class="space-y-0.5">
-            <span class="text-slate-400 text-[11px]">Автоматический расчёт ИМТ (модель B):</span>
+            <span class="text-slate-400 text-[11px]">Автоматический расчёт ИМТ:</span>
             <div id="survey-bmi-preview-status" class="font-bold text-white text-xs">24.5 кг/м² • Нормальная масса тела</div>
           </div>
-          <span id="survey-bmi-b-badge" class="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 text-[10px] font-mono font-bold">B = -0.10</span>
         </div>
 
         <!-- Inline Validation Error Box (visible if invalid) -->
@@ -328,24 +327,24 @@
               <div class="text-xs font-bold text-slate-200">Вы курите?</div>
               <div class="text-[11px] text-slate-400">Сигареты, электронные испарители, кальяны или стики</div>
             </div>
-            <button type="button" onclick="toggleExplain('smoking')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+            <button type="button" onclick="toggleExplain('smoking')" class="text-[11px] text-cyan-400 hover:text-cyan-300" aria-label="Зачем спрашивают про курение?"><span aria-hidden="true">💡</span> Зачем?</button>
           </div>
           <div id="why-explain-smoking" class="hidden p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
             <b>Влияние фактора:</b> Курение повышает тонус периферических сосудов и снижает доставку кислорода к тканям. Выбор «Предпочитаю не отвечать» не приравнивается к отсутствию курения — система честно уведомит, что для полного расчета требуется этот параметр.
           </div>
           <div class="grid grid-cols-3 gap-2 pt-1">
-            <button type="button" id="opt-smoking-0" onclick="handleChoice('smoking', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              🌱 Не курю
+            <button type="button" id="opt-smoking-0" onclick="handleChoice('smoking', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Не курю">
+              <span aria-hidden="true">🌱</span> Не курю
             </button>
-            <button type="button" id="opt-smoking-1" onclick="handleChoice('smoking', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              🚬 Курю
+            <button type="button" id="opt-smoking-1" onclick="handleChoice('smoking', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Курю">
+              <span aria-hidden="true">🚬</span> Курю
             </button>
-            <button type="button" id="opt-smoking-unknown" onclick="handleChoice('smoking', null, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-[10px] sm:text-xs font-medium text-center hover:bg-slate-700 transition">
-              🔒 Не отвечать
+            <button type="button" id="opt-smoking-unknown" onclick="handleChoice('smoking', null, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-[10px] sm:text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Предпочитаю не отвечать">
+              <span aria-hidden="true">🔒</span> Не отвечать
             </button>
           </div>
-          <div id="survey-smoking-notice" class="hidden text-[10px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg">
-            ℹ️ Ответ «Предпочитаю не отвечать» зафиксирован. Значение не будет подменяться нулем. Для полного расчета индекса потребуется указать этот фактор.
+          <div id="survey-smoking-notice" class="hidden text-[10px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg" role="status" aria-live="polite">
+            <span aria-hidden="true">ℹ️</span> Ответ «Предпочитаю не отвечать» зафиксирован. Значение не будет подменяться нулем. Для полного расчета индекса потребуется указать этот фактор.
           </div>
         </div>
 
@@ -356,20 +355,20 @@
               <div class="text-xs font-bold text-slate-200">Как часто вы испытываете стресс?</div>
               <div class="text-[11px] text-slate-400">Оцените ваше эмоциональное состояние за последний месяц</div>
             </div>
-            <button type="button" onclick="toggleExplain('stress')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+            <button type="button" onclick="toggleExplain('stress')" class="text-[11px] text-cyan-400 hover:text-cyan-300" aria-label="Зачем спрашивают про стресс?"><span aria-hidden="true">💡</span> Зачем?</button>
           </div>
           <div id="why-explain-stress" class="hidden p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
             <b>Влияние фактора:</b> Хронический стресс увеличивает выброс адреналина и кортизола, повышая частоту пульса и снижая вариабельность ритма (HRV).
           </div>
           <div class="grid grid-cols-3 gap-2 pt-1">
-            <button type="button" id="opt-stress-0" onclick="handleChoice('stress', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              😌 Редко
+            <button type="button" id="opt-stress-0" onclick="handleChoice('stress', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Редко">
+              <span aria-hidden="true">😌</span> Редко
             </button>
-            <button type="button" id="opt-stress-1" onclick="handleChoice('stress', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              😐 Иногда (умеренно)
+            <button type="button" id="opt-stress-1" onclick="handleChoice('stress', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Иногда (умеренно)">
+              <span aria-hidden="true">😐</span> Иногда (умеренно)
             </button>
-            <button type="button" id="opt-stress-2" onclick="handleChoice('stress', 2, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              😫 Почти каждый день
+            <button type="button" id="opt-stress-2" onclick="handleChoice('stress', 2, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Почти каждый день">
+              <span aria-hidden="true">😫</span> Почти каждый день
             </button>
           </div>
         </div>
@@ -381,20 +380,20 @@
               <div class="text-xs font-bold text-slate-200">Насколько регулярно вы двигаетесь или тренируетесь?</div>
               <div class="text-[11px] text-slate-400">Прогулки, зарядка, фитнес, спорт или физический труд</div>
             </div>
-            <button type="button" onclick="toggleExplain('activity')" class="text-[11px] text-cyan-400 hover:text-cyan-300">💡 Зачем?</button>
+            <button type="button" onclick="toggleExplain('activity')" class="text-[11px] text-cyan-400 hover:text-cyan-300" aria-label="Зачем спрашивают про активность?"><span aria-hidden="true">💡</span> Зачем?</button>
           </div>
           <div id="why-explain-activity" class="hidden p-2 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
             <b>Защитный фактор:</b> Регулярное движение укрепляет сердечную мышцу и сосуды. В математической модели физическая активность имеет отрицательный весовой коэффициент (−0.30·P) и снижает расчётный риск!
           </div>
           <div class="grid grid-cols-3 gap-2 pt-1">
-            <button type="button" id="opt-activity-0" onclick="handleChoice('activity', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              🪑 Почти не двигаюсь
+            <button type="button" id="opt-activity-0" onclick="handleChoice('activity', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Почти не двигаюсь">
+              <span aria-hidden="true">🪑</span> Почти не двигаюсь
             </button>
-            <button type="button" id="opt-activity-1" onclick="handleChoice('activity', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              🚶 Умеренно (прогулки)
+            <button type="button" id="opt-activity-1" onclick="handleChoice('activity', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Умеренно (прогулки)">
+              <span aria-hidden="true">🚶</span> Умеренно (прогулки)
             </button>
-            <button type="button" id="opt-activity-2" onclick="handleChoice('activity', 2, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              🏃 Регулярно занимаюсь
+            <button type="button" id="opt-activity-2" onclick="handleChoice('activity', 2, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Регулярно занимаюсь">
+              <span aria-hidden="true">🏃</span> Регулярно занимаюсь
             </button>
           </div>
         </div>
@@ -431,9 +430,7 @@
                 Инфаркт миокарда, инсульт или гипертония у родителей, родных братьев/сестёр или бабушек/дедушек.
               </div>
             </div>
-            <button type="button" onclick="toggleExplain('familyHistory')" class="text-[11px] text-cyan-400 hover:text-cyan-300 whitespace-nowrap ml-2">
-              💡 Зачем?
-            </button>
+            <button type="button" onclick="toggleExplain('familyHistory')" class="text-[11px] text-cyan-400 hover:text-cyan-300 whitespace-nowrap ml-2" aria-label="Зачем спрашивают про семейную историю?"><span aria-hidden="true">💡</span> Зачем?</button>
           </div>
 
           <div id="why-explain-familyHistory" class="hidden p-2.5 rounded-lg bg-slate-800/80 border border-cyan-500/20 text-[11px] text-slate-300 leading-relaxed">
@@ -441,19 +438,19 @@
           </div>
 
           <div class="grid grid-cols-3 gap-2 pt-2">
-            <button type="button" id="opt-familyHistory-0" onclick="handleChoice('familyHistory', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              ❌ Нет
+            <button type="button" id="opt-familyHistory-0" onclick="handleChoice('familyHistory', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Нет">
+              <span aria-hidden="true">❌</span> Нет
             </button>
-            <button type="button" id="opt-familyHistory-1" onclick="handleChoice('familyHistory', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              ⚠️ Да, были
+            <button type="button" id="opt-familyHistory-1" onclick="handleChoice('familyHistory', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Да, были">
+              <span aria-hidden="true">⚠️</span> Да, были
             </button>
-            <button type="button" id="opt-familyHistory-unknown" onclick="handleChoice('familyHistory', null, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition">
-              ❓ Не знаю
+            <button type="button" id="opt-familyHistory-unknown" onclick="handleChoice('familyHistory', null, this)" class="py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-xs font-medium text-center hover:bg-slate-700 transition" aria-label="Не знаю">
+              <span aria-hidden="true">❓</span> Не знаю
             </button>
           </div>
 
-          <div id="survey-family-notice" class="hidden text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-lg leading-relaxed">
-            ℹ️ Ответ «Не знаю» зафиксирован. Данные не подменяются нулем. Вы сможете обновить ответ в настройках после разговора с родственниками.
+          <div id="survey-family-notice" class="hidden text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 p-2.5 rounded-lg leading-relaxed" role="status" aria-live="polite">
+            <span aria-hidden="true">ℹ️</span> Ответ «Не знаю» зафиксирован. Данные не подменяются нулем. Вы сможете обновить ответ в настройках после разговора с родственниками.
           </div>
         </div>
 
