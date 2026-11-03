@@ -1,0 +1,18 @@
+{
+  "name": "Qamqor Medical Band Hub",
+  "short_name": "Qamqor",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#080c14",
+  "theme_color": "#080c14",
+  "orientation": "portrait-primary",
+  "description": "Медицинский IoT хаб для браслета Qamqor: кардиомониторинг в реальном времени, оценка рисков ССЗ и связь с врачом.",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%23080c14' stroke='%2310b981' stroke-width='4'/%3E%3Cpath d='M20 52 L35 52 L42 28 L54 75 L62 45 L68 55 L80 52' fill='none' stroke='%2310b981' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

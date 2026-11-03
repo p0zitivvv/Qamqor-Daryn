@@ -2196,6 +2196,8 @@ class ECGCanvasService {
       this.loop();
     }
     this.canvases.forEach(item => {
+      if (!item.emptyState) item.emptyState = document.getElementById(item.id === 'homeECGCanvas' ? 'home-ecg-empty-state' : 'ecg-empty-state');
+      if (!item.statusPill) item.statusPill = document.getElementById(item.id === 'homeECGCanvas' ? 'home-ecg-status-pill' : 'ecg-status-pill');
       if (item.emptyState) {
         if (active) item.emptyState.classList.add('hidden');
         else item.emptyState.classList.remove('hidden');
@@ -2267,6 +2269,8 @@ class ECGCanvasService {
     const now = performance.now() / 1000;
 
     this.canvases.forEach(item => {
+      if (!item.canvas) item.canvas = document.getElementById(item.id);
+      if (item.canvas && !item.ctx) item.ctx = item.canvas.getContext('2d');
       const { canvas, ctx } = item;
       if (!canvas || !ctx) return;
 
