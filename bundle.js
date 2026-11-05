@@ -2580,14 +2580,19 @@ const App = {
   },
 
   switchTab(tabId) {
+    if (!tabId) return;
+    tabId = tabId.replace(/^tab-/, '');
     this.state.activeTab = tabId;
     const tabs = ['home', 'metrics', 'factors', 'history', 'settings', 'guardian'];
 
     tabs.forEach(t => {
       const sec = document.getElementById(`tab-${t}`);
       const btn = document.getElementById(`nav-btn-${t}`);
+      const sbtn = document.getElementById(`sidebar-btn-${t}`);
+      const isActive = (t === tabId);
+
       if (sec) {
-        if (t === tabId) {
+        if (isActive) {
           sec.classList.remove('hidden');
           sec.style.display = 'block';
         } else {
@@ -2595,15 +2600,22 @@ const App = {
           sec.style.display = 'none';
         }
       }
+
+      // Mobile Bottom Nav Button Styling (Light Theme)
       if (btn) {
-        if (t === tabId) {
-          const activeColor = t === 'guardian' ? 'text-violet-400' : 'text-emerald-400';
-          btn.classList.add(activeColor, 'font-semibold');
-          btn.classList.remove('text-slate-400', 'font-medium', 'text-emerald-400', 'text-violet-400');
-          btn.classList.add(activeColor);
+        if (isActive) {
+          btn.className = 'flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-teal-700 font-semibold text-[10px] transition bg-teal-50/80';
         } else {
-          btn.classList.remove('text-emerald-400', 'text-violet-400', 'font-semibold');
-          btn.classList.add('text-slate-400', 'font-medium');
+          btn.className = 'flex flex-col items-center justify-center py-1.5 px-0.5 rounded-xl text-slate-500 font-medium text-[10px] transition hover:text-slate-900';
+        }
+      }
+
+      // Desktop Sidebar Button Styling (Light Theme)
+      if (sbtn) {
+        if (isActive) {
+          sbtn.className = 'flex items-center space-x-3 w-full px-3.5 py-2.5 rounded-xl bg-teal-50 text-teal-800 font-semibold text-xs border border-teal-200/60 shadow-sm transition';
+        } else {
+          sbtn.className = 'flex items-center space-x-3 w-full px-3.5 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-50 text-xs font-medium transition';
         }
       }
     });
@@ -2611,12 +2623,17 @@ const App = {
     try {
       if (tabId === 'history') {
         this.renderHistoryList();
+        this.renderRecommendationsTab();
       } else if (tabId === 'factors') {
         this.renderFactorsTab();
       } else if (tabId === 'guardian') {
         this.renderGuardianTab();
       } else if (tabId === 'settings') {
         this.populateSettingsTab();
+      } else if (tabId === 'home' || tabId === 'metrics') {
+        if (this.ecgCanvas) {
+          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected);
+        }
       }
     } catch(err) {
       console.warn('Error rendering tab content:', tabId, err);
@@ -2981,6 +2998,20 @@ const App = {
       }
     }
 
+    // Дополнительные селекторы для вкладки Мониторинг и Мой риск
+    const mBpm = document.getElementById('metric-bpm');
+    if (mBpm) mBpm.textContent = this.state.bpm != null ? this.state.bpm : '72';
+    const mSpo2 = document.getElementById('metric-spo2');
+    if (mSpo2) mSpo2.textContent = this.state.spo2 != null ? `${this.state.spo2}%` : '98%';
+    const mSdnn = document.getElementById('metric-sdnn');
+    if (mSdnn) mSdnn.textContent = this.state.sdnn != null ? Math.round(this.state.sdnn) : '48';
+    const mRiskVal = document.getElementById('risk-index-value');
+    if (mRiskVal && this.state.modelEvaluation && this.state.modelEvaluation.index != null) {
+      mRiskVal.textContent = this.state.modelEvaluation.index;
+    }
+
+    this.renderRecentMeasurementsTable();
+
     // Полнота данных (c)
     if (this.state.qualityResult) {
       const qPctEl = document.getElementById('home-quality-percent');
@@ -3022,74 +3053,74 @@ const App = {
     const isZoneYellow = evalRes.zone === 'yellow';
 
     container.innerHTML = `
-      <!-- 1. ИНТЕРАКТИВНЫЙ ДЫХАТЕЛЬНЫЙ ТРЕНАЖЕР (ДЛЯ НОРМАЛИЗАЦИИ ПУЛЬСА) -->
-      <div class="glass-card rounded-2xl p-4 sm:p-5 border border-cyan-500/30 bg-gradient-to-br from-cyan-950/25 via-slate-900 to-slate-900 space-y-3">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
-          <div class="flex items-center space-x-2.5">
-            <div class="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-300 font-bold text-sm">
+      <!-- 1. ИНТЕРАКТИВНЫЙ ДЫХАТЕЛЬНЫЙ ТРЕНАЖЕР 4-4-4 -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div class="flex items-center space-x-3">
+            <div class="w-9 h-9 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-700 font-bold text-base">
               🫁
             </div>
             <div>
-              <h3 class="text-sm font-bold text-white">Дыхательное упражнение 4–4–4</h3>
-              <p class="text-[11px] text-slate-400">Быстро снижает пульс на 5–10 уд/мин и успокаивает нервную систему</p>
+              <h3 class="text-sm font-bold text-slate-900">Дыхательное упражнение 4–4–4</h3>
+              <p class="text-[11px] text-slate-500">Нормализует ЧСС на 5–10 уд/мин и восстанавливает вегетативный баланс</p>
             </div>
           </div>
-          <button id="btn-breathing-toggle" onclick="App.toggleBreathingExercise()" class="px-3 py-1.5 rounded-xl bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 text-xs font-bold border border-cyan-500/40 transition">
+          <button id="btn-breathing-toggle" onclick="App.toggleBreathingExercise()" class="px-3.5 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold shadow-sm transition active:scale-95">
             ▶ Начать
           </button>
         </div>
 
-        <!-- Breathing Animated Visualizer Box -->
-        <div id="breathing-box" class="hidden flex flex-col items-center justify-center py-4 space-y-3 bg-slate-950/60 rounded-xl border border-cyan-500/20">
+        <!-- Animated Visualizer Box -->
+        <div id="breathing-box" class="hidden flex flex-col items-center justify-center py-5 space-y-3 bg-slate-50 rounded-xl border border-slate-200">
           <div class="relative w-28 h-28 flex items-center justify-center">
-            <div id="breathing-circle" class="w-20 h-20 rounded-full bg-cyan-500/20 border-2 border-cyan-400 flex items-center justify-center transition-all duration-1000">
-              <span id="breathing-phase-sec" class="text-2xl font-bold font-mono text-white">4</span>
+            <div id="breathing-circle" class="w-20 h-20 rounded-full bg-teal-100 border-2 border-teal-500 flex items-center justify-center transition-all duration-1000">
+              <span id="breathing-phase-sec" class="text-2xl font-bold font-mono text-teal-800">4</span>
             </div>
           </div>
           <div class="text-center space-y-0.5">
-            <div id="breathing-phase-text" class="text-xs font-bold text-cyan-300 uppercase tracking-wider">Вдох носом...</div>
-            <div class="text-[11px] text-slate-400">Дышите животом, расслабьте плечи и шею</div>
+            <div id="breathing-phase-text" class="text-xs font-bold text-teal-800 uppercase tracking-wider">Вдох носом...</div>
+            <div class="text-[11px] text-slate-500">Дышите животом, расслабьте плечи и шею</div>
           </div>
         </div>
       </div>
 
-      <!-- 2. СРОЧНЫЙ ПЛАН УЛУЧШЕНИЯ (ДО 3 ДЕЙСТВИЙ) -->
-      <div class="glass-card rounded-2xl p-4 sm:p-5 border ${isZoneRed ? 'border-rose-500/40 bg-rose-950/10' : isZoneYellow ? 'border-amber-500/40 bg-amber-950/10' : 'border-emerald-500/30 bg-emerald-950/5'} space-y-3">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-2.5">
-          <div class="flex items-center space-x-2">
-            <span class="w-6 h-6 rounded-lg ${isZoneRed ? 'bg-rose-500/20 text-rose-300' : isZoneYellow ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/20 text-emerald-300'} flex items-center justify-center text-xs font-bold">✓</span>
+      <!-- 2. СРОЧНЫЙ ПЛАН УЛУЧШЕНИЯ -->
+      <div class="bg-white rounded-2xl p-5 border ${isZoneRed ? 'border-rose-200 bg-rose-50/20' : isZoneYellow ? 'border-amber-200 bg-amber-50/20' : 'border-slate-200'} shadow-sm space-y-3">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div class="flex items-center space-x-2.5">
+            <span class="w-6 h-6 rounded-lg ${isZoneRed ? 'bg-rose-100 text-rose-700' : isZoneYellow ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'} flex items-center justify-center text-xs font-bold">✓</span>
             <div>
-              <h3 class="text-sm font-bold text-white">Что сделать прямо сейчас</h3>
-              <p class="text-[11px] text-slate-400">Персональные практические шаги для вашего здоровья</p>
+              <h3 class="text-sm font-bold text-slate-900">Что сделать прямо сейчас</h3>
+              <p class="text-[11px] text-slate-500">Персональные практические шаги для вашего здоровья</p>
             </div>
           </div>
-          <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+          <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
             ${plan.filter(p => p.isCompleted).length} из ${plan.length} выполнено
           </span>
         </div>
 
-        <div class="space-y-2.5">
+        <div class="space-y-2">
           ${plan.length === 0 ? `
-            <div class="p-3 text-center text-xs text-slate-400">
+            <div class="p-4 text-center text-xs text-slate-500">
               Показатели в норме. Особых корректирующих мер прямо сейчас не требуется. Продолжайте день в комфортном темпе!
             </div>
           ` : plan.map(item => `
-            <div class="p-3 rounded-xl ${item.isCompleted ? 'bg-slate-900/60 border-emerald-500/30' : 'bg-slate-900 border-slate-800'} border flex items-start space-x-3 transition">
-              <button onclick="App.toggleActionCompleted('${item.id}')" class="mt-0.5 w-5 h-5 rounded-lg border ${item.isCompleted ? 'bg-emerald-500 border-emerald-400 text-white' : 'border-slate-600 bg-slate-800 text-transparent'} flex items-center justify-center transition flex-shrink-0">
+            <div class="p-3.5 rounded-xl ${item.isCompleted ? 'bg-slate-50 border-emerald-200' : 'bg-white border-slate-200'} border flex items-start space-x-3 transition hover:shadow-xs">
+              <button onclick="App.toggleActionCompleted('${item.id}')" class="mt-0.5 w-5 h-5 rounded-md border ${item.isCompleted ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 bg-white text-transparent'} flex items-center justify-center transition flex-shrink-0">
                 <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
                   <polyline points="20 6 9 17 4 12"/>
                 </svg>
               </button>
-              <div class="space-y-1 flex-1">
+              <div class="space-y-0.5 flex-1">
                 <div class="flex items-center justify-between">
-                  <span class="text-xs font-bold ${item.isCompleted ? 'line-through text-slate-400' : 'text-slate-200'}">
+                  <span class="text-xs font-bold ${item.isCompleted ? 'line-through text-slate-400' : 'text-slate-900'}">
                     ${item.title}
                   </span>
-                  <span class="text-[10px] font-mono px-1.5 py-0.2 rounded ${item.priority === 'high' ? 'bg-rose-500/20 text-rose-300' : item.priority === 'medium' ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-400'}">
+                  <span class="text-[10px] font-mono px-1.5 py-0.5 rounded ${item.priority === 'high' ? 'bg-rose-50 text-rose-700 border border-rose-200' : item.priority === 'medium' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-slate-100 text-slate-600'}">
                     ${item.category}
                   </span>
                 </div>
-                <div class="text-xs text-slate-300 leading-relaxed ${item.isCompleted ? 'line-through text-slate-500' : ''}">
+                <div class="text-xs text-slate-600 leading-relaxed ${item.isCompleted ? 'line-through text-slate-400' : ''}">
                   ${item.action}
                 </div>
               </div>
@@ -3098,120 +3129,107 @@ const App = {
         </div>
       </div>
 
-      <!-- 3. КАТЕГОРИИ РЕКОМЕНДАЦИЙ -->
-      <div class="glass-card rounded-2xl p-4 border border-slate-800 space-y-3">
-        <div class="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center space-x-2">
-          <span>Рекомендации по образу жизни и самочувствию</span>
-        </div>
-
-        <div class="grid grid-cols-1 gap-2.5">
-          ${recs.map(r => `
-            <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
-              <div class="flex items-center justify-between">
-                <span class="text-xs font-bold text-slate-200">${r.title}</span>
-                <span class="text-[10px] font-medium px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                  ${r.category}
-                </span>
-              </div>
-              <p class="text-xs text-slate-400 leading-relaxed">${r.description}</p>
-              <div class="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-emerald-300 font-medium">
-                👉 Совет: ${r.action}
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-
-      <!-- 4. ПОНЯТНЫЙ ЧЕЛОВЕКУ РАЗБОР ФАКТОРОВ (БЕЗ СЛОЖНЫХ ФОРМУЛ) -->
-      <div class="glass-card rounded-2xl p-4 sm:p-5 border border-slate-800 space-y-4">
-        <div class="border-b border-slate-800 pb-2">
-          <h3 class="text-sm font-bold text-white flex items-center space-x-2">
-            <span>Как сформирована ваша оценка здоровья</span>
-          </h3>
-          <p class="text-[11px] text-slate-400 mt-0.5 leading-relaxed">
-            Система учитывает постоянные привычки (анкету) и текущую работу сердца (датчики) без сложных медицинских терминов.
+      <!-- 3. ДЕТАЛЬНЫЙ РАЗБОР ФАКТОРОВ -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+        <div class="border-b border-slate-100 pb-2.5">
+          <h3 class="text-sm font-bold text-slate-900">Разбор факторов кардио-оценки</h3>
+          <p class="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
+            Модель оценивает постоянные привычки (анкета) и динамику сердца (датчики) в реальном времени.
           </p>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
           <!-- Группа 1: Анкета и привычки -->
-          <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2.5">
-            <div class="flex items-center space-x-2 text-cyan-400 font-bold border-b border-slate-800 pb-1.5">
-              <span>📋 Привычки и особенности</span>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+            <div class="flex items-center space-x-2 text-teal-800 font-bold border-b border-slate-200 pb-1.5">
+              <span>📋 Анкета и анамнез (L_stat)</span>
             </div>
             ${stat ? `
-            <div class="space-y-2 text-[11px] text-slate-300">
+            <div class="space-y-2 text-[11px] text-slate-600">
               <div class="flex justify-between items-center">
-                <span class="text-slate-400">Возраст:</span>
-                <span class="font-semibold text-slate-200">${stat.normalized.A != null ? Math.round(stat.normalized.A * 10 + 40) : 40} лет</span>
+                <span class="text-slate-500">Возраст:</span>
+                <span class="font-semibold text-slate-800">${stat.normalized.A != null ? Math.round(stat.normalized.A * 10 + 40) : 40} лет</span>
               </div>
               <div class="flex justify-between items-center">
-                <span class="text-slate-400">Вес и рост (ИМТ):</span>
-                <span class="font-semibold text-slate-200">${stat.normalized.bmi || 24.5} кг/м² (норма)</span>
+                <span class="text-slate-500">ИМТ:</span>
+                <span class="font-semibold text-slate-800">${stat.normalized.bmi || 24.5} кг/м²</span>
               </div>
               <div class="flex justify-between items-center">
-                <span class="text-slate-400">Курение:</span>
-                <span class="font-semibold ${stat.normalized.S ? 'text-amber-400' : 'text-emerald-400'}">${stat.normalized.S ? 'Да (фактор риска)' : 'Нет'}</span>
+                <span class="text-slate-500">Курение:</span>
+                <span class="font-semibold ${stat.normalized.S ? 'text-amber-600' : 'text-emerald-700'}">${stat.normalized.S ? 'Да (+0.70)' : 'Нет (0)'}</span>
               </div>
               <div class="flex justify-between items-center">
-                <span class="text-slate-400">Физическая активность:</span>
-                <span class="font-semibold text-emerald-400">Поддерживает сердце</span>
+                <span class="text-slate-500">Активность:</span>
+                <span class="font-semibold text-emerald-700">Поддерживает сердце</span>
               </div>
             </div>
             ` : `
-            <div class="text-amber-300 text-xs">Анкета не заполнена. Заполните для персональной точности.</div>
+            <div class="text-amber-600 text-xs">Анкета не заполнена полностью.</div>
             `}
           </div>
 
           <!-- Группа 2: Датчики браслета прямо сейчас -->
-          <div class="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-2.5">
-            <div class="flex items-center space-x-2 text-emerald-400 font-bold border-b border-slate-800 pb-1.5">
-              <span>💓 Датчики браслета прямо сейчас</span>
+          <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+            <div class="flex items-center space-x-2 text-teal-800 font-bold border-b border-slate-200 pb-1.5">
+              <span>💓 Биомаркеры датчиков (L_dyn)</span>
             </div>
-            <div class="space-y-2 text-[11px] text-slate-300">
+            <div class="space-y-2 text-[11px] text-slate-600">
               <div class="flex justify-between items-center">
-                <span class="text-slate-400">Пульс в покое:</span>
-                <span class="font-semibold ${this.state.bpm > 95 ? 'text-amber-400' : 'text-emerald-400'}">${this.state.bpm || 72} уд/мин (норма: ${baseline.hr0 || 70})</span>
+                <span class="text-slate-500">Пульс в покое:</span>
+                <span class="font-semibold ${this.state.bpm > 95 ? 'text-amber-600' : 'text-emerald-700'}">${this.state.bpm || 72} уд/мин (норма: ${baseline.hr0 || 70})</span>
               </div>
               <div class="flex justify-between items-center">
-                <span class="text-slate-400">Кислород (SpO2):</span>
-                <span class="font-semibold ${this.state.spo2 < 95 ? 'text-amber-400' : 'text-cyan-400'}">${this.state.spo2 || 98}% (отлично)</span>
+                <span class="text-slate-500">Кислород (SpO2):</span>
+                <span class="font-semibold ${this.state.spo2 < 95 ? 'text-amber-600' : 'text-teal-700'}">${this.state.spo2 || 98}% (отлично)</span>
               </div>
               <div class="flex justify-between items-center">
-                <span class="text-slate-400">Ритм сердца:</span>
-                <span class="font-semibold text-emerald-400">${this.state.pIrr > 0.1 ? 'Требует покоя' : 'Ровный и стабильный'}</span>
+                <span class="text-slate-500">Ритм сердца:</span>
+                <span class="font-semibold text-emerald-700">${this.state.pIrr > 0.1 ? 'Умеренная аритмия' : 'Ровный ритм'}</span>
               </div>
               <div class="flex justify-between items-center">
-                <span class="text-slate-400">Надежность замера:</span>
-                <span class="font-semibold text-slate-200">${Math.round((q.percentage || 88))}%</span>
+                <span class="text-slate-500">Качество данных (c):</span>
+                <span class="font-semibold text-slate-800">${Math.round((q.percentage || 88))}%</span>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-400 leading-relaxed">
+        <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-500 leading-relaxed">
           💡 <b>Напоминание:</b> Оценка носит ориентировочный характер для контроля повседневной нагрузки. При любых болях в груди, головокружении или нехватке воздуха обратитесь к врачу или вызовите 103.
         </div>
       </div>
     `;
   },
+
   updateConnectionUI() {
     const dot = document.getElementById('app-connection-indicator-dot');
     const label = document.getElementById('app-connection-indicator-text');
     const demoBar = document.getElementById('demo-mode-alert-bar');
+    const sDot = document.getElementById('sidebar-device-dot');
+    const sLabel = document.getElementById('sidebar-device-label');
+    const sBadge = document.getElementById('sidebar-device-status-badge');
 
     if (this.state.isDemo) {
-      if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
+      if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-500 animate-pulse';
       if (label) label.textContent = 'Деморежим';
       if (demoBar) demoBar.classList.remove('hidden');
+      if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-amber-500 animate-pulse';
+      if (sLabel) sLabel.textContent = 'Демо-режим активен';
+      if (sBadge) sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-medium';
     } else if (this.state.isConnected) {
-      if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+      if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
       if (label) label.textContent = 'Подключено (BLE)';
       if (demoBar) demoBar.classList.add('hidden');
+      if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+      if (sLabel) sLabel.textContent = 'Qamqor Band • BLE';
+      if (sBadge) sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-medium';
     } else {
-      if (dot) dot.className = 'w-2 h-2 rounded-full bg-slate-500';
+      if (dot) dot.className = 'w-2 h-2 rounded-full bg-slate-400';
       if (label) label.textContent = 'Не подключено';
       if (demoBar) demoBar.classList.add('hidden');
+      if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-slate-400';
+      if (sLabel) sLabel.textContent = 'Устройство не подключено';
+      if (sBadge) sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium';
     }
 
     const headerBleBtn = document.getElementById('header-ble-btn');
@@ -3713,6 +3731,95 @@ const App = {
     this.nextSurveyStep(1);
   },
 
+  renderRecentMeasurementsTable() {
+    const tableBody = document.getElementById('recent-measurements-table-body');
+    if (!tableBody) return;
+
+    const hist = StorageService.getHistory();
+    const latestItems = hist.slice(0, 5);
+
+    if (latestItems.length === 0) {
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const bpm = this.state.bpm || 72;
+      const spo2 = this.state.spo2 || 98;
+      const sdnn = Math.round(this.state.sdnn || 48);
+      const idx = this.state.modelEvaluation ? this.state.modelEvaluation.index : 18;
+      const zone = this.state.modelEvaluation ? this.state.modelEvaluation.zone : 'green';
+      const badgeClass = zone === 'red' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                         zone === 'yellow' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                         'bg-emerald-50 text-emerald-700 border-emerald-200';
+      const statusText = zone === 'red' ? 'Высокий риск' : zone === 'yellow' ? 'Внимание' : 'Норма';
+
+      tableBody.innerHTML = `
+        <tr class="border-b border-slate-100 hover:bg-slate-50/60 transition">
+          <td class="py-2.5 px-3 font-mono text-slate-500">${timeStr}</td>
+          <td class="py-2.5 px-3 font-semibold text-slate-800 font-mono">${bpm} <span class="text-[10px] text-slate-400 font-sans">уд/м</span></td>
+          <td class="py-2.5 px-3 font-semibold text-slate-800 font-mono">${spo2}%</td>
+          <td class="py-2.5 px-3 font-mono text-slate-600">${sdnn} <span class="text-[10px] text-slate-400 font-sans">мс</span></td>
+          <td class="py-2.5 px-3 font-mono font-bold text-slate-900">${idx}</td>
+          <td class="py-2.5 px-3 text-right">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${badgeClass}">${statusText}</span>
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tableBody.innerHTML = latestItems.map(item => {
+      const zone = item.zone || 'green';
+      const badgeClass = zone === 'red' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                         zone === 'yellow' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                         'bg-emerald-50 text-emerald-700 border-emerald-200';
+      const statusText = zone === 'red' ? 'Высокий риск' : zone === 'yellow' ? 'Внимание' : 'Норма';
+      return `
+        <tr class="border-b border-slate-100 hover:bg-slate-50/60 transition">
+          <td class="py-2.5 px-3 font-mono text-slate-500">${item.timeStr || '--:--'}</td>
+          <td class="py-2.5 px-3 font-semibold text-slate-800 font-mono">${item.bpm || '--'} <span class="text-[10px] text-slate-400 font-sans">уд/м</span></td>
+          <td class="py-2.5 px-3 font-semibold text-slate-800 font-mono">${item.spo2 != null ? item.spo2 + '%' : '--'}</td>
+          <td class="py-2.5 px-3 font-mono text-slate-600">${item.sdnn ? Math.round(item.sdnn) : '--'} <span class="text-[10px] text-slate-400 font-sans">мс</span></td>
+          <td class="py-2.5 px-3 font-mono font-bold text-slate-900">${item.index != null ? item.index : '--'}</td>
+          <td class="py-2.5 px-3 text-right">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${badgeClass}">${statusText}</span>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  },
+
+  renderRecommendationsTab() {
+    const listEl = document.getElementById('recommendations-list');
+    if (!listEl) return;
+
+    const recs = this.state.recommendations || [];
+    const plan = this.state.improvementPlan || [];
+
+    if (recs.length === 0 && plan.length === 0) {
+      listEl.innerHTML = `
+        <div class="p-8 text-center text-slate-500 text-xs">
+          Показатели в норме. Персональные рекомендации появятся при накоплении данных.
+        </div>
+      `;
+      return;
+    }
+
+    listEl.innerHTML = recs.map(r => `
+      <div class="p-4 rounded-xl bg-white border border-slate-200 shadow-sm space-y-2 hover:border-slate-300 transition">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-900">${r.title}</span>
+          <span class="text-[10px] font-medium px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
+            ${r.category}
+          </span>
+        </div>
+        <p class="text-xs text-slate-600 leading-relaxed">${r.description}</p>
+        <div class="p-2.5 rounded-lg bg-teal-50 border border-teal-200 text-xs text-teal-800 font-medium flex items-center space-x-2">
+          <span class="text-teal-600">💡</span>
+          <span><b>Рекомендация:</b> ${r.action}</span>
+        </div>
+      </div>
+    `).join('');
+  },
+
   // ========================================================
   // ИСТОРИЯ И CSV
   // ========================================================
@@ -3727,17 +3834,17 @@ const App = {
     }
 
     container.innerHTML = hist.map(h => `
-      <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs">
+      <div class="p-3.5 rounded-xl bg-white border border-slate-200 flex items-center justify-between text-xs hover:border-slate-300 transition">
         <div class="flex items-center space-x-3">
-          <span class="w-2.5 h-2.5 rounded-full ${h.isDemo ? 'bg-amber-400' : 'bg-emerald-400'} flex-shrink-0"></span>
+          <span class="w-2.5 h-2.5 rounded-full ${h.isDemo ? 'bg-amber-400' : 'bg-emerald-500'} flex-shrink-0"></span>
           <div>
-            <div class="font-semibold text-slate-200">${h.title}</div>
+            <div class="font-semibold text-slate-900">${h.title}</div>
             <div class="text-[10px] text-slate-500 mt-0.5 font-mono">
               ${h.dateStr} ${h.timeStr} • Качество c: ${h.c != null ? Math.round(h.c * 100) + '%' : '--'}
             </div>
           </div>
         </div>
-        <span class="font-mono font-bold text-slate-300 text-xs">${h.index != null ? 'Индекс: ' + h.index : ''}</span>
+        <span class="font-mono font-bold text-slate-800 text-xs bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">${h.index != null ? 'Индекс: ' + h.index : ''}</span>
       </div>
     `).join('');
   },
@@ -3838,9 +3945,9 @@ const App = {
 
     if (index == null || zone === 'none') {
       arc.style.strokeDasharray = '0 ' + circumference;
-      arc.style.stroke = '#334155';
-      if (centerNum) { centerNum.textContent = '--'; centerNum.style.fill = '#94a3b8'; }
-      if (centerLabel) { centerLabel.textContent = 'Ожидание'; centerLabel.style.fill = '#94a3b8'; }
+      arc.style.stroke = '#E2E8F0';
+      if (centerNum) { centerNum.textContent = '--'; centerNum.style.fill = '#94A3B8'; }
+      if (centerLabel) { centerLabel.textContent = 'Ожидание'; centerLabel.style.fill = '#94A3B8'; }
       return;
     }
 
@@ -3849,7 +3956,7 @@ const App = {
     arc.style.strokeDasharray = dashLen + ' ' + (circumference - dashLen);
     arc.style.transition = 'stroke-dasharray 0.6s ease, stroke 0.4s ease';
 
-    const color = zone === 'red' ? '#ef4444' : zone === 'yellow' ? '#f59e0b' : '#10b981';
+    const color = zone === 'red' ? '#DC2626' : zone === 'yellow' ? '#F59E0B' : '#16A34A';
     arc.style.stroke = color;
 
     if (centerNum) { centerNum.textContent = index; centerNum.style.fill = color; }
@@ -3889,36 +3996,35 @@ const App = {
     const isRed = evalRes.zone === 'red';
     const isYellow = evalRes.zone === 'yellow';
 
-    // Формируем текст предпросмотра сообщения
     const previewMessage = this.getFormattedGuardianAlertMessage('red');
     const previewDisplayHtml = previewMessage
       .replace(/\n/g, '<br>')
-      .replace(/\*([^*]+)\*/g, '<b class="text-white">$1</b>');
+      .replace(/\*([^*]+)\*/g, '<b class="text-slate-900">$1</b>');
 
     tab.innerHTML = `
       <div class="space-y-4">
         <!-- Шапка -->
-        <div class="p-4 rounded-2xl bg-gradient-to-r from-violet-950/40 to-slate-900 border border-violet-500/30 text-xs text-slate-300 leading-relaxed flex items-start justify-between gap-3">
+        <div class="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-start justify-between gap-4">
           <div class="space-y-1">
             <div class="flex items-center space-x-2">
-              <b class="text-white text-sm">Удалённый присмотр за близким</b>
-              <span class="px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 text-[10px] font-bold">Сын / Врач</span>
+              <span class="text-sm font-bold text-slate-900">Удалённый присмотр за близким</span>
+              <span class="px-2 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200 text-[10px] font-bold">Сын / Врач</span>
             </div>
-            <div class="text-slate-400 leading-normal">
+            <p class="text-xs text-slate-500 leading-relaxed max-w-xl">
               Если браслет носит <b>мама</b>, а сын или врач находится <b>в другом городе</b> — система автоматически пришлёт срочный сигнал при росте риска или ухудшении пульса.
-            </div>
+            </p>
           </div>
           <span class="text-3xl flex-shrink-0">👨‍⚕️</span>
         </div>
 
         <!-- КАРТОЧКА: ПРОВЕРКА ОТПРАВКИ И ПРЕДПРОСМОТР СООБЩЕНИЯ -->
-        <div class="glass-card rounded-2xl p-4 sm:p-5 border border-cyan-500/40 bg-gradient-to-br from-cyan-950/20 via-slate-900 to-slate-900 space-y-3.5">
-          <div class="flex items-center justify-between border-b border-slate-800 pb-2">
-            <div class="flex items-center space-x-2">
-              <span class="w-6 h-6 rounded-lg bg-cyan-500/20 text-cyan-300 flex items-center justify-center font-bold text-xs">📨</span>
+        <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div class="flex items-center space-x-2.5">
+              <span class="w-7 h-7 rounded-lg bg-teal-50 text-teal-700 flex items-center justify-center font-bold text-sm">📨</span>
               <div>
-                <h3 class="text-xs sm:text-sm font-bold text-white">Проверка отправки в бот и текст сообщения</h3>
-                <p class="text-[10px] sm:text-[11px] text-slate-400">Проверьте, доходят ли сообщения опекуну, и посмотрите текст оповещения</p>
+                <h3 class="text-sm font-bold text-slate-900">Проверка отправки в Telegram</h3>
+                <p class="text-[11px] text-slate-500">Проверьте доставку уведомлений опекуну в реальном времени</p>
               </div>
             </div>
           </div>
@@ -3926,16 +4032,16 @@ const App = {
           <!-- Предпросмотр текста сообщения для Telegram -->
           <div class="space-y-1.5">
             <div class="flex items-center justify-between text-xs">
-              <span class="font-bold text-cyan-300 uppercase tracking-wider text-[11px]">💬 Какое сообщение отправляется в бот:</span>
-              <span class="text-[10px] text-slate-400 font-mono">Telegram Markdown</span>
+              <span class="font-bold text-slate-700 uppercase tracking-wider text-[11px]">💬 Формат сообщения для Telegram:</span>
+              <span class="text-[10px] text-slate-400 font-mono">Markdown</span>
             </div>
-            <div class="p-3.5 rounded-xl bg-slate-950/90 border border-slate-800 text-[11px] text-slate-300 font-mono leading-relaxed shadow-inner">
+            <div id="guardian-tg-preview" class="p-4 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700 font-mono leading-relaxed">
               ${previewDisplayHtml}
             </div>
           </div>
 
           <!-- Кнопка проверки доставки -->
-          <button id="btn-verify-telegram" onclick="App.verifyTelegramDelivery()" class="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-500/25 active:scale-98 transition flex items-center justify-center space-x-2">
+          <button id="btn-verify-telegram" onclick="App.verifyTelegramDelivery()" class="w-full py-2.5 px-4 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-semibold text-xs shadow-sm active:scale-98 transition flex items-center justify-center space-x-2">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
             <span>Проверить отправку в Telegram прямо сейчас</span>
           </button>
@@ -3945,37 +4051,37 @@ const App = {
         </div>
 
         <!-- 1. Быстрый обмен данными с сыном / врачом -->
-        <div class="glass-card rounded-2xl p-4 border border-slate-800 space-y-3">
+        <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
           <div class="flex items-center justify-between">
-            <div class="text-xs font-bold text-slate-300 uppercase tracking-wider">Поделиться состоянием</div>
-            <span class="text-[10px] font-mono text-emerald-400">В 1 клик</span>
+            <div class="text-xs font-bold text-slate-800 uppercase tracking-wider">Поделиться состоянием</div>
+            <span class="text-[10px] font-mono text-teal-700 bg-teal-50 px-2 py-0.5 rounded-full border border-teal-200">В 1 клик</span>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button onclick="App.shareViaWhatsApp()" class="py-2.5 px-3 rounded-xl bg-emerald-600/90 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center space-x-2 transition shadow-md shadow-emerald-600/20">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <button onclick="App.shareViaWhatsApp()" class="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs flex items-center justify-center space-x-2 transition shadow-sm">
               <span>💬 Отправить сводку в WhatsApp</span>
             </button>
-            <button onclick="App.copyGuardianShareLink()" class="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-300 font-semibold text-xs border border-cyan-700/50 flex items-center justify-center space-x-2 transition">
+            <button onclick="App.copyGuardianShareLink()" class="py-2.5 px-3 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-semibold text-xs border border-slate-200 flex items-center justify-center space-x-2 transition">
               <span>🔗 Скопировать ссылку для сына</span>
             </button>
           </div>
         </div>
 
         <!-- 2. Настройки опекуна (Telegram) -->
-        <div class="glass-card rounded-2xl p-4 border border-slate-800 space-y-3">
-          <div class="text-xs font-bold text-violet-400 uppercase tracking-wider">Настройки опекуна / врача</div>
+        <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3.5">
+          <div class="text-xs font-bold text-teal-800 uppercase tracking-wider">Настройки опекуна / врача</div>
 
           <div class="space-y-1">
-            <label class="block text-xs font-medium text-slate-300">Имя опекуна <span class="text-slate-500">(например: Сын Арман, Врач Карим)</span></label>
-            <input type="text" id="guardian-name" value="${cfg.name || ''}" placeholder="Сын Арман" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-violet-400">
+            <label class="block text-xs font-medium text-slate-700">Имя опекуна <span class="text-slate-400 font-normal">(например: Сын Арман, Врач Карим)</span></label>
+            <input type="text" id="guardian-name" value="${cfg.name || ''}" placeholder="Сын Арман" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-teal-600 focus:bg-white transition">
           </div>
 
           <div class="space-y-1">
-            <label class="block text-xs font-medium text-slate-300">Телефон опекуна <span class="text-slate-500">(для быстрого звонка)</span></label>
-            <input type="tel" id="guardian-phone" value="${cfg.phone || ''}" placeholder="+7 777 123 4567" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-violet-400">
+            <label class="block text-xs font-medium text-slate-700">Телефон опекуна <span class="text-slate-400 font-normal">(для экстренного звонка)</span></label>
+            <input type="tel" id="guardian-phone" value="${cfg.phone || ''}" placeholder="+7 777 123 4567" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-teal-600 focus:bg-white transition">
           </div>
 
-          <div class="p-3 rounded-xl bg-amber-950/20 border border-amber-700/30 text-[11px] text-amber-200 leading-relaxed space-y-1">
+          <div class="p-3.5 rounded-xl bg-amber-50/80 border border-amber-200 text-[11px] text-amber-800 leading-relaxed space-y-1">
             <div class="font-bold">⚡ Как настроить Telegram-бота:</div>
             <div>1. Откройте Telegram → найдите <b>@BotFather</b> → напишите <span class="font-mono">/newbot</span></div>
             <div>2. Вставьте сюда полученный <b>Bot Token</b></div>
@@ -3983,28 +4089,28 @@ const App = {
           </div>
 
           <div class="space-y-1">
-            <label class="block text-xs font-medium text-slate-300">Telegram Bot Token <span class="text-rose-400">*</span></label>
-            <input type="text" id="guardian-token" value="${cfg.botToken || ''}" placeholder="1234567890:AAHq_ABCDEF..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-violet-400">
+            <label class="block text-xs font-medium text-slate-700">Telegram Bot Token <span class="text-rose-500">*</span></label>
+            <input type="text" id="guardian-token" value="${cfg.botToken || ''}" placeholder="1234567890:AAHq_ABCDEF..." class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-teal-600 focus:bg-white transition">
           </div>
 
           <div class="space-y-1">
-            <label class="block text-xs font-medium text-slate-300">Telegram Chat ID сына / опекуна <span class="text-rose-400">*</span></label>
-            <input type="text" id="guardian-chatid" value="${cfg.chatId || ''}" placeholder="987654321" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono focus:outline-none focus:border-violet-400">
+            <label class="block text-xs font-medium text-slate-700">Telegram Chat ID сына / опекуна <span class="text-rose-500">*</span></label>
+            <input type="text" id="guardian-chatid" value="${cfg.chatId || ''}" placeholder="987654321" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-teal-600 focus:bg-white transition">
           </div>
 
           <div class="space-y-2 pt-1">
-            <div class="text-xs font-medium text-slate-300">Когда присылать сигналы опекуну:</div>
-            <label class="flex items-center space-x-3 cursor-pointer p-2 rounded-xl bg-slate-900/80 border border-slate-800">
-              <input type="checkbox" id="guardian-notify-red" ${cfg.notifyRed ? 'checked' : ''} class="w-4 h-4 accent-rose-500 cursor-pointer flex-shrink-0">
-              <span class="text-xs text-slate-300">🔴 <b>Красная зона:</b> индекс ≥ 40 (Срочно!)</span>
+            <div class="text-xs font-medium text-slate-700">Когда присылать сигналы опекуну:</div>
+            <label class="flex items-center space-x-3 cursor-pointer p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+              <input type="checkbox" id="guardian-notify-red" ${cfg.notifyRed ? 'checked' : ''} class="w-4 h-4 accent-rose-600 cursor-pointer flex-shrink-0">
+              <span class="text-xs text-slate-700">🔴 <b>Красная зона:</b> индекс ≥ 40 (Срочно!)</span>
             </label>
-            <label class="flex items-center space-x-3 cursor-pointer p-2 rounded-xl bg-slate-900/80 border border-slate-800">
-              <input type="checkbox" id="guardian-notify-det" ${cfg.notifyDeterioration ? 'checked' : ''} class="w-4 h-4 accent-amber-500 cursor-pointer flex-shrink-0">
-              <span class="text-xs text-slate-300">🟡 <b>Ухудшение:</b> резкий скачок пульса или падение кислорода</span>
+            <label class="flex items-center space-x-3 cursor-pointer p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+              <input type="checkbox" id="guardian-notify-det" ${cfg.notifyDeterioration ? 'checked' : ''} class="w-4 h-4 accent-amber-600 cursor-pointer flex-shrink-0">
+              <span class="text-xs text-slate-700">🟡 <b>Ухудшение:</b> резкий скачок пульса или падение кислорода</span>
             </label>
           </div>
 
-          <button onclick="App.saveGuardianSettings()" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-purple-700 hover:from-violet-500 hover:to-purple-600 text-white font-bold text-xs shadow-lg shadow-violet-500/20 transition">
+          <button onclick="App.saveGuardianSettings()" class="w-full py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-semibold text-xs shadow-sm transition">
             💾 Сохранить настройки опекуна
           </button>
         </div>

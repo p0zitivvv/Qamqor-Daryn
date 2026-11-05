@@ -56,31 +56,34 @@ if (bundleScriptRegex.test(indexHtml)) {
   console.warn('Warning: Could not find bundle script tag in index.html to inline');
 }
 
-// 3. Создание директории dist для совместимости с любыми настройками Vercel
-const distDir = path.join(process.cwd(), 'dist');
-if (!fs.existsSync(distDir)) {
-  fs.mkdirSync(distDir, { recursive: true });
-}
+// 3. Создание директорий dist и public для 100% совместимости с любыми настройками Vercel
+const targetDirs = [path.join(process.cwd(), 'dist'), path.join(process.cwd(), 'public')];
 
-// Запись файлов в dist
-fs.writeFileSync(path.join(distDir, 'bundle.js'), bundleContent, 'utf-8');
-fs.writeFileSync(path.join(distDir, 'index.html'), indexHtml, 'utf-8');
+for (const targetDir of targetDirs) {
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
 
-const copyFiles = ['sw.js', 'manifest.json', 'vercel.json'];
-for (const f of copyFiles) {
-  if (fs.existsSync(f)) {
-    fs.copyFileSync(f, path.join(distDir, f));
+  // Запись файлов
+  fs.writeFileSync(path.join(targetDir, 'bundle.js'), bundleContent, 'utf-8');
+  fs.writeFileSync(path.join(targetDir, 'index.html'), indexHtml, 'utf-8');
+
+  const copyFiles = ['sw.js', 'manifest.json', 'vercel.json'];
+  for (const f of copyFiles) {
+    if (fs.existsSync(f)) {
+      fs.copyFileSync(f, path.join(targetDir, f));
+    }
+  }
+
+  // Копирование js/
+  const targetJsDir = path.join(targetDir, 'js');
+  if (!fs.existsSync(targetJsDir)) {
+    fs.mkdirSync(targetJsDir, { recursive: true });
+  }
+  const jsFiles = fs.readdirSync('js');
+  for (const jf of jsFiles) {
+    fs.copyFileSync(path.join('js', jf), path.join(targetJsDir, jf));
   }
 }
-
-// Копирование js/ в dist/js
-const distJsDir = path.join(distDir, 'js');
-if (!fs.existsSync(distJsDir)) {
-  fs.mkdirSync(distJsDir, { recursive: true });
-}
-const jsFiles = fs.readdirSync('js');
-for (const jf of jsFiles) {
-  fs.copyFileSync(path.join('js', jf), path.join(distJsDir, jf));
-}
-console.log('dist directory prepared successfully with all static assets!');
+console.log('dist and public directories prepared successfully with all static assets!');
 
