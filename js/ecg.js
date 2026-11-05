@@ -58,8 +58,8 @@ export class ECGCanvasService {
       if (item.statusPill) {
         item.statusPill.textContent = active ? 'LIVE 250 Гц' : 'Ожидание';
         item.statusPill.className = active
-          ? 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono'
-          : 'text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700';
+          ? 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-semibold'
+          : 'text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 font-medium';
       }
     });
   }

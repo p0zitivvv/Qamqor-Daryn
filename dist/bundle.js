@@ -2205,8 +2205,8 @@ class ECGCanvasService {
       if (item.statusPill) {
         item.statusPill.textContent = active ? 'LIVE 250 Гц' : 'Ожидание';
         item.statusPill.className = active
-          ? 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono'
-          : 'text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700';
+          ? 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-semibold'
+          : 'text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 font-medium';
       }
     });
   }
@@ -3467,8 +3467,8 @@ const App = {
 
   refreshSmokingButtons() {
     const val = this.state.surveyTemp.smoking;
-    const activeClass = 'py-2.5 px-2 rounded-xl border border-cyan-500/70 bg-cyan-500/20 text-cyan-200 text-xs font-bold text-center ring-1 ring-cyan-400/40 shadow-sm transition';
-    const inactiveClass = 'py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-400 text-xs font-medium text-center hover:bg-slate-700 transition';
+    const activeClass = 'py-2.5 px-2 rounded-xl border-2 border-teal-700 bg-teal-700 text-white font-bold text-xs text-center shadow-xs transition';
+    const inactiveClass = 'py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition';
 
     const btn0 = document.getElementById('opt-smoking-0');
     const btn1 = document.getElementById('opt-smoking-1');
@@ -3486,8 +3486,8 @@ const App = {
 
   refreshStressButtons() {
     const val = this.state.surveyTemp.stress != null ? this.state.surveyTemp.stress : 1;
-    const activeClass = 'py-2.5 px-2 rounded-xl border border-cyan-500/70 bg-cyan-500/20 text-cyan-200 text-xs font-bold text-center ring-1 ring-cyan-400/40 shadow-sm transition';
-    const inactiveClass = 'py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-400 text-xs font-medium text-center hover:bg-slate-700 transition';
+    const activeClass = 'py-2.5 px-2 rounded-xl border-2 border-teal-700 bg-teal-700 text-white font-bold text-xs text-center shadow-xs transition';
+    const inactiveClass = 'py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition';
 
     [0, 1, 2].forEach(lvl => {
       const btn = document.getElementById(`opt-stress-${lvl}`);
@@ -3497,8 +3497,8 @@ const App = {
 
   refreshActivityButtons() {
     const val = this.state.surveyTemp.activity != null ? this.state.surveyTemp.activity : 1;
-    const activeClass = 'py-2.5 px-2 rounded-xl border border-cyan-500/70 bg-cyan-500/20 text-cyan-200 text-xs font-bold text-center ring-1 ring-cyan-400/40 shadow-sm transition';
-    const inactiveClass = 'py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-400 text-xs font-medium text-center hover:bg-slate-700 transition';
+    const activeClass = 'py-2.5 px-2 rounded-xl border-2 border-teal-700 bg-teal-700 text-white font-bold text-xs text-center shadow-xs transition';
+    const inactiveClass = 'py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition';
 
     [0, 1, 2].forEach(lvl => {
       const btn = document.getElementById(`opt-activity-${lvl}`);
@@ -3508,8 +3508,8 @@ const App = {
 
   refreshFamilyButtons() {
     const val = this.state.surveyTemp.familyHistory;
-    const activeClass = 'py-2.5 px-2 rounded-xl border border-cyan-500/70 bg-cyan-500/20 text-cyan-200 text-xs font-bold text-center ring-1 ring-cyan-400/40 shadow-sm transition';
-    const inactiveClass = 'py-2.5 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-400 text-xs font-medium text-center hover:bg-slate-700 transition';
+    const activeClass = 'py-2.5 px-2 rounded-xl border-2 border-teal-700 bg-teal-700 text-white font-bold text-xs text-center shadow-xs transition';
+    const inactiveClass = 'py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition';
 
     const btn0 = document.getElementById('opt-familyHistory-0');
     const btn1 = document.getElementById('opt-familyHistory-1');
@@ -3623,12 +3623,12 @@ const App = {
       ];
 
       itemsContainer.innerHTML = cards.map(c => `
-        <div class="p-2.5 rounded-xl bg-slate-900 border ${c.ok ? 'border-slate-800' : 'border-amber-500/40 bg-amber-500/5'} space-y-0.5">
+        <div class="p-3 rounded-xl bg-slate-50 border ${c.ok ? 'border-slate-200' : 'border-amber-200 bg-amber-50/60'} space-y-1">
           <div class="flex items-center justify-between">
-            <span class="text-slate-400 text-[11px]">${c.label}</span>
+            <span class="text-slate-500 text-[11px] font-medium">${c.label}</span>
             <span class="text-xs">${c.ok ? '✅' : '⚠️'}</span>
           </div>
-          <div class="text-xs font-semibold ${c.ok ? 'text-slate-200' : 'text-amber-300'}">${c.val}</div>
+          <div class="text-xs font-bold ${c.ok ? 'text-slate-900' : 'text-amber-800'}">${c.val}</div>
         </div>
       `).join('');
     }
@@ -3659,7 +3659,7 @@ const App = {
             : modelEval.zone === 'yellow' ? '<span class="text-amber-400 font-bold">Желтая зона (Умеренный риск)</span>'
             : '<span class="text-rose-400 font-bold">Красная зона (Высокий риск)</span>';
 
-          verdictContainer.className = 'p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-2';
+          verdictContainer.className = 'p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 space-y-2';
           verdictContainer.innerHTML = `
             <div class="flex items-center justify-between">
               <span class="text-xs font-bold text-emerald-300 uppercase tracking-wider">✅ Все данные собраны • Расчёт готов</span>
@@ -3671,7 +3671,7 @@ const App = {
             </p>
           `;
         } else {
-          verdictContainer.className = 'p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/30 space-y-2';
+          verdictContainer.className = 'p-4 rounded-xl bg-teal-50 border border-teal-200 text-teal-900 space-y-2';
           verdictContainer.innerHTML = `
             <div class="text-xs font-bold text-cyan-300 uppercase tracking-wider">ℹ️ Анкета сохранена • Ожидание стабильного сигнала</div>
             <p class="text-[11px] text-slate-300 leading-relaxed">
@@ -3682,7 +3682,7 @@ const App = {
       } else {
         // Данных анкеты недостаточно
         const missingList = validation.missing.map(m => `• <b>${m.label}:</b> ${m.reason}`).join('<br>');
-        verdictContainer.className = 'p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2';
+        verdictContainer.className = 'p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 space-y-2';
         verdictContainer.innerHTML = `
           <div class="text-xs font-bold text-amber-300 uppercase tracking-wider">⚠️ Расчёт индекса приостановлен (неполные данные)</div>
           <p class="text-[11px] text-slate-300 leading-relaxed">
@@ -3697,19 +3697,19 @@ const App = {
     if (actionsContainer) {
       if (validation.isValid) {
         actionsContainer.innerHTML = `
-          <button type="button" onclick="App.goToSurveyStep(1)" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold">
+          <button type="button" onclick="App.goToSurveyStep(1)" class="py-2.5 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold transition">
             Изменить ответы
           </button>
-          <button type="button" onclick="App.completeSurveyAndOpenApp()" class="flex-1 py-2.5 px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-500/25 transition text-center">
+          <button type="button" onclick="App.completeSurveyAndOpenApp()" class="flex-1 py-2.5 px-5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs shadow-sm transition text-center">
             Перейти в дашборд здоровья →
           </button>
         `;
       } else {
         actionsContainer.innerHTML = `
-          <button type="button" onclick="App.goToSurveyStep(1)" class="py-2.5 px-4 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold">
+          <button type="button" onclick="App.goToSurveyStep(1)" class="py-2.5 px-4 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold transition">
             ← Дополнить анкету
           </button>
-          <button type="button" onclick="App.completeSurveyAndOpenApp()" class="flex-1 py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700 text-center">
+          <button type="button" onclick="App.completeSurveyAndOpenApp()" class="flex-1 py-2.5 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold text-center transition">
             Открыть дашборд (только датчики) →
           </button>
         `;
@@ -3916,9 +3916,9 @@ const App = {
     if (!container) return;
 
     const t = document.createElement('div');
-    const borderCol = type === 'success' ? 'border-emerald-500/50 bg-emerald-950/80 text-emerald-200' :
-                      type === 'warning' ? 'border-amber-500/50 bg-amber-950/80 text-amber-200' :
-                      'border-cyan-500/50 bg-slate-900/90 text-cyan-200';
+    const borderCol = type === 'success' ? 'border-emerald-200 bg-white text-emerald-800' :
+                      type === 'warning' ? 'border-amber-200 bg-white text-amber-800' :
+                      'border-teal-200 bg-white text-teal-800';
 
     t.className = `p-3 rounded-xl border ${borderCol} backdrop-blur-md shadow-xl text-xs font-medium flex items-center justify-between transition-all duration-300 transform translate-y-2 pointer-events-auto`;
     t.innerHTML = `<span>${msg}</span>`;
