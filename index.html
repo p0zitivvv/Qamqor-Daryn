@@ -1301,26 +1301,34 @@
   <!-- ======================================================== -->
   <!-- MODAL: SOS EMERGENCY ACTION & DIALOG -->
   <!-- ======================================================== -->
-  <div id="modal-sos-dialog" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+  <div id="modal-sos-dialog" role="dialog" aria-modal="true" aria-labelledby="sos-dialog-title" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
     <div class="health-card max-w-sm w-full p-6 text-center space-y-4 shadow-2xl">
       <div class="w-14 h-14 mx-auto rounded-full bg-rose-50 border-2 border-rose-500 flex items-center justify-center text-rose-600">
-        <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
           <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
         </svg>
       </div>
 
       <div>
-        <h3 class="text-base font-bold text-slate-900">Экстренное оповещение</h3>
+        <h3 id="sos-dialog-title" class="text-base font-bold text-slate-900">Экстренная помощь</h3>
         <p class="text-xs text-slate-600 mt-1" id="sos-dialog-description">
           Зафиксировано повышенное кардио-напряжение или вызван сигнал тревоги. Проверьте самочувствие.
         </p>
       </div>
 
       <div class="space-y-2 pt-2">
-        <a href="tel:103" class="w-full py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-sm transition flex items-center justify-center space-x-2">
-          <span>Вызов Скорой Помощи (103)</span>
+        <a href="tel:103" class="w-full min-h-[44px] py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-sm transition flex items-center justify-center space-x-2">
+          <span>📞 Скорая медицинская помощь (103)</span>
         </a>
-        <button onclick="App.closeSOSModal()" class="w-full py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs border border-slate-200 transition">
+        <div class="grid grid-cols-2 gap-2">
+          <a href="tel:112" class="min-h-[44px] py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs border border-rose-200 transition flex items-center justify-center space-x-1">
+            <span>🚨 Служба 112</span>
+          </a>
+          <a href="tel:911" class="min-h-[44px] py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-200 transition flex items-center justify-center space-x-1">
+            <span>🌐 Номер 911</span>
+          </a>
+        </div>
+        <button type="button" onclick="App.closeSOSModal()" class="w-full min-h-[44px] py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs border border-slate-200 transition">
           Закрыть
         </button>
       </div>
@@ -5830,11 +5838,44 @@ if (document.readyState === 'loading') {
       var heightEl = document.getElementById('survey-input-height');
       var weightEl = document.getElementById('survey-input-weight');
       var nameEl = document.getElementById('survey-input-name');
+      var errBox = document.getElementById('survey-step1-error-msg');
 
-      var age = parseInt(ageEl ? ageEl.value : '40', 10) || 40;
-      var height = parseFloat(heightEl ? heightEl.value : '175') || 175;
-      var weight = parseFloat(weightEl ? weightEl.value : '75') || 75;
+      var age = parseInt(ageEl ? ageEl.value : '40', 10);
+      var height = parseFloat(heightEl ? heightEl.value : '175');
+      var weight = parseFloat(weightEl ? weightEl.value : '75');
       var name = nameEl ? nameEl.value.trim() : '';
+
+      // Валидация возраста
+      if (isNaN(age) || age < 10 || age > 110) {
+        if (errBox) {
+          errBox.textContent = 'Пожалуйста, укажите корректный возраст от 10 до 110 лет';
+          errBox.classList.remove('hidden');
+        }
+        if (ageEl) ageEl.focus();
+        return;
+      }
+
+      // Валидация роста
+      if (isNaN(height) || height < 50 || height > 250) {
+        if (errBox) {
+          errBox.textContent = 'Пожалуйста, укажите рост в см (от 50 до 250)';
+          errBox.classList.remove('hidden');
+        }
+        if (heightEl) heightEl.focus();
+        return;
+      }
+
+      // Валидация веса
+      if (isNaN(weight) || weight < 25 || weight > 300) {
+        if (errBox) {
+          errBox.textContent = 'Пожалуйста, укажите вес в кг (от 25 до 300)';
+          errBox.classList.remove('hidden');
+        }
+        if (weightEl) weightEl.focus();
+        return;
+      }
+
+      if (errBox) errBox.classList.add('hidden');
 
       var hM = height > 3.0 ? height / 100.0 : height;
       var bmi = Math.round((weight / (hM * hM)) * 10) / 10;
@@ -5858,29 +5899,78 @@ if (document.readyState === 'loading') {
       }
     }
 
-    function handleStep2Click(e) {
+    function handleStepForward(targetStep, e) {
       if (e) e.preventDefault();
-      switchSurveyPanel(3);
-      if (window.App && typeof window.App.refreshStep3Buttons === 'function') {
+
+      window.surveyData = window.surveyData || {};
+
+      // Шаг 1 -> Шаг 2 (с валидацией полей возраста, роста, веса)
+      if (targetStep === 2) {
+        handleStep1Click(e);
+        return;
+      }
+
+      // Шаг 2 -> Шаг 3 (Привычки -> Семейный анализ)
+      if (targetStep === 3) {
+        if (window.surveyData.smoking === undefined) window.surveyData.smoking = 0;
+        if (window.surveyData.stress === undefined) window.surveyData.stress = 1;
+        if (window.surveyData.activity === undefined) window.surveyData.activity = 1;
+      }
+
+      // Шаг 3 -> Шаг 4 (Семейный анализ -> Проверка датчика)
+      if (targetStep === 4) {
+        if (window.surveyData.familyHistory === undefined) {
+          var btn0 = document.getElementById('opt-familyHistory-0');
+          var isZero = btn0 && (btn0.getAttribute('aria-checked') === 'true' || btn0.className.indexOf('bg-teal-700') !== -1);
+          window.surveyData.familyHistory = isZero ? 0 : 0;
+        }
+      }
+
+      // Синхронизируем состояние с объектом App
+      if (window.App && window.App.state) {
+        if (!window.App.state.surveyTemp) window.App.state.surveyTemp = {};
+        Object.assign(window.App.state.surveyTemp, window.surveyData);
+      }
+
+      // Переход на целевой шаг
+      if (window.App && typeof window.App.goToSurveyStep === 'function') {
+        try {
+          window.App.goToSurveyStep(targetStep);
+          return;
+        } catch(err) {
+          console.warn('[Survey] App.goToSurveyStep warning, using inline switch:', err);
+        }
+      }
+
+      switchSurveyPanel(targetStep);
+
+      // Хуки отрисовки целевого шага
+      if (targetStep === 3 && window.App && typeof window.App.refreshStep3Buttons === 'function') {
         try { window.App.refreshStep3Buttons(); } catch(err) {}
-      }
-    }
-
-    function handleStep3Click(e) {
-      if (e) e.preventDefault();
-      switchSurveyPanel(4);
-      if (window.App && typeof window.App.updateSurveyDeviceStatus === 'function') {
+      } else if (targetStep === 4 && window.App && typeof window.App.updateSurveyDeviceStatus === 'function') {
         try { window.App.updateSurveyDeviceStatus(); } catch(err) {}
-      }
-    }
-
-    function handleStep4Click(e) {
-      if (e) e.preventDefault();
-      switchSurveyPanel(5);
-      if (window.App && typeof window.App.renderSurveySummary === 'function') {
+      } else if (targetStep === 5 && window.App && typeof window.App.renderSurveySummary === 'function') {
         try { window.App.renderSurveySummary(); } catch(err) {}
       }
     }
+
+    function handleStep2Click(e) {
+      handleStepForward(3, e);
+    }
+
+    function handleStep3Click(e) {
+      handleStepForward(4, e);
+    }
+
+    function handleStep4Click(e) {
+      handleStepForward(5, e);
+    }
+
+    window.handleStepForward = handleStepForward;
+    window.handleStep1Click = handleStep1Click;
+    window.handleStep2Click = handleStep2Click;
+    window.handleStep3Click = handleStep3Click;
+    window.handleStep4Click = handleStep4Click;
 
     function safeStartDemo() {
       // 1. Немедленно сохраняем флаги демо-режима в localStorage
@@ -5981,8 +6071,24 @@ if (document.readyState === 'loading') {
 
     function handleStepBack(targetStep, e) {
       if (e) e.preventDefault();
+      if (window.App && typeof window.App.goToSurveyStep === 'function') {
+        try {
+          window.App.goToSurveyStep(targetStep);
+          return;
+        } catch (err) {
+          console.warn('[Survey] App.goToSurveyStep in handleStepBack error:', err);
+        }
+      }
       switchSurveyPanel(targetStep);
+      if (targetStep === 1 && window.App && typeof window.App.populateStep1Inputs === 'function') {
+        try { window.App.populateStep1Inputs(); } catch(err) {}
+      } else if (targetStep === 2 && window.App && typeof window.App.refreshStep2Buttons === 'function') {
+        try { window.App.refreshStep2Buttons(); } catch(err) {}
+      } else if (targetStep === 3 && window.App && typeof window.App.refreshStep3Buttons === 'function') {
+        try { window.App.refreshStep3Buttons(); } catch(err) {}
+      }
     }
+    window.handleStepBack = handleStepBack;
 
     function safeSwitchTab(tabId) {
       if (window.App && typeof window.App.switchTab === 'function') {
