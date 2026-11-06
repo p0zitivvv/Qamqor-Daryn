@@ -68,7 +68,7 @@ for (const targetDir of targetDirs) {
   fs.writeFileSync(path.join(targetDir, 'bundle.js'), bundleContent, 'utf-8');
   fs.writeFileSync(path.join(targetDir, 'index.html'), indexHtml, 'utf-8');
 
-  const copyFiles = ['sw.js', 'manifest.json', 'vercel.json'];
+  const copyFiles = ['sw.js', 'manifest.json', 'vercel.json', 'robots.txt', 'sitemap.xml'];
   for (const f of copyFiles) {
     if (fs.existsSync(f)) {
       fs.copyFileSync(f, path.join(targetDir, f));

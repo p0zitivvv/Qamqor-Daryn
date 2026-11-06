@@ -1,8 +1,21 @@
-// Qamqor Band PWA - Service Worker v3.0 (Network-First for fresh updates)
-const CACHE_NAME = 'qamqor-pwa-v3';
+// Qamqor Health Monitoring System - PWA Service Worker v3.1
+const CACHE_NAME = 'qamqor-cache-v3.1';
+const PRECACHE_ASSETS = [
+  './',
+  './index.html',
+  './bundle.js',
+  './manifest.json',
+  './robots.txt'
+];
 
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(PRECACHE_ASSETS).catch((err) => {
+        console.warn('[Qamqor SW] Precache warning:', err);
+      });
+    }).then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -11,7 +24,7 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         keys.map((key) => {
           if (key !== CACHE_NAME) {
-            console.log('[Qamqor SW] Clearing old cache:', key);
+            console.log('[Qamqor SW] Removing stale cache:', key);
             return caches.delete(key);
           }
         })
@@ -21,9 +34,29 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Network-first strategy for app files to always serve latest code on hosting
   if (event.request.method !== 'GET') return;
 
+  const url = new URL(event.request.url);
+
+  // Для навигационных запросов (страниц) - Network-first с fallback на offline index.html
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((c) => c.put(event.request, copy));
+          }
+          return response;
+        })
+        .catch(() => {
+          return caches.match('./index.html') || caches.match('./');
+        })
+    );
+    return;
+  }
+
+  // Для остальных ассетов - Stale-while-revalidate / Network-first
   event.respondWith(
     fetch(event.request)
       .then((networkResponse) => {
@@ -35,4 +68,10 @@ self.addEventListener('fetch', (event) => {
       })
       .catch(() => caches.match(event.request))
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });

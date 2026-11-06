@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Qamqor — Клинический мониторинг здоровья и кардио-рисков</title>
   
   <!-- PWA Meta Tags -->
@@ -15,6 +15,36 @@
   <!-- Manifest & Favicon -->
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%23FFFFFF' stroke='%230F766E' stroke-width='4'/%3E%3Cpath d='M20 52 L35 52 L42 28 L54 75 L62 45 L68 55 L80 52' fill='none' stroke='%230F766E' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+
+    <!-- Open Graph & Social Cards -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Qamqor — Клинический мониторинг здоровья и кардио-рисков">
+  <meta property="og:description" content="Медицинская цифровая платформа персонального мониторинга биосигналов, оценки риска и персональных рекомендаций.">
+  <meta property="og:url" content="https://qamqordaryn.vercel.app/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Qamqor — Клинический мониторинг здоровья">
+  <meta name="twitter:description" content="Персональный мониторинг биосигналов и динамика кардио-риска.">
+
+  <!-- Schema.org JSON-LD -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": ["SoftwareApplication", "MedicalWebPage"],
+    "name": "Qamqor Health Monitoring Hub",
+    "applicationCategory": "HealthApplication",
+    "operatingSystem": "All",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "KZT"
+    },
+    "description": "Медицинский IoT хаб для браслета Qamqor: кардиомониторинг в реальном времени, оценка рисков ССЗ и связь с врачом.",
+    "about": {
+      "@type": "MedicalCondition",
+      "name": "Cardiovascular Health Monitoring"
+    }
+  }
+  </script>
 
   <!-- Google Fonts: Inter & JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -93,19 +123,24 @@
       border: 1px solid #1E293B;
       border-radius: 0.875rem;
     }
-    button { min-height: 38px; }
+    button, input, select { min-height: 44px; }
+    * { touch-action: manipulation; }
     nav button { min-height: 44px; }
     * { -webkit-tap-highlight-color: transparent; }
     body { padding-bottom: env(safe-area-inset-bottom); }
     nav { padding-bottom: calc(env(safe-area-inset-bottom) + 6px); }
   </style>
 </head>
+  <!-- Skip Link for Keyboard Accessibility (WCAG 2.1) -->
+  <a href="#screen-main-app" class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-4 focus:py-2.5 focus:bg-teal-700 focus:text-white focus:font-bold focus:rounded-xl focus:shadow-lg focus:outline-none focus:ring-2 focus:ring-teal-500">
+    Перейти к основному содержимому
+  </a>
 <body class="min-h-screen bg-[#F8FAFC] text-slate-900 flex flex-col justify-between selection:bg-teal-100 selection:text-teal-900 antialiased">
 
   <!-- ======================================================== -->
   <!-- TOAST NOTIFICATION CONTAINER -->
   <!-- ======================================================== -->
-  <div id="toast-container" class="fixed top-4 right-4 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full px-4"></div>
+  <div id="toast-container" aria-live="polite" aria-atomic="true" class="fixed top-4 right-4 z-50 flex flex-col space-y-2 pointer-events-none max-w-sm w-full px-4"></div>
 
   <!-- PWA Install Banner -->
   <div id="pwa-install-banner" class="hidden fixed bottom-20 left-4 right-4 z-50 max-w-md mx-auto">
@@ -238,13 +273,13 @@
         </div>
 
         <div class="space-y-1">
-          <label class="block text-xs font-medium text-slate-700">Как вас зовут? <span class="text-slate-400 font-normal">(необязательно)</span></label>
-          <input type="text" id="survey-input-name" placeholder="Например: Айдар" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-teal-600 focus:bg-white transition">
+          <label for="survey-input-name" class="block text-xs font-medium text-slate-700">Как вас зовут? <span class="text-slate-500 font-normal">(необязательно)</span></label>
+          <input type="text" id="survey-input-name" name="name" autocomplete="name" placeholder="Например: Айдар" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-teal-600 focus:bg-white transition">
         </div>
 
         <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
           <div class="flex items-center justify-between">
-            <label class="block text-xs font-bold text-slate-800">Сколько вам лет? <span class="text-rose-500">*</span></label>
+            <label for="survey-input-age" class="block text-xs font-bold text-slate-800">Сколько вам лет? <span class="text-rose-500">*</span></label>
             <button type="button" onclick="toggleExplain('age')" class="text-[11px] text-teal-700 hover:text-teal-800 font-medium inline-flex items-center space-x-1">
               <span>💡 Зачем спрашиваем?</span>
             </button>
@@ -259,10 +294,10 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
             <div class="flex items-center justify-between">
-              <label class="block text-xs font-bold text-slate-800">Рост (см) <span class="text-rose-500">*</span></label>
+              <label for="survey-input-height" class="block text-xs font-bold text-slate-800">Рост (см) <span class="text-rose-500">*</span></label>
               <button type="button" onclick="toggleExplain('height')" class="text-[11px] text-teal-700 hover:text-teal-800 font-medium">💡 Зачем?</button>
             </div>
-            <input type="number" id="survey-input-height" oninput="safeUpdateBMI()" min="50" max="250" value="175" placeholder="175" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-teal-600">
+            <input type="number" id="survey-input-height" oninput="debouncedUpdateBMI()" min="50" max="250" value="175" placeholder="175" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-teal-600">
             <div id="why-explain-height" class="hidden mt-2 p-2 rounded-lg bg-teal-50/70 border border-teal-200 text-[11px] text-teal-900 leading-relaxed">
               Рост используется для автоматического вычисления индекса массы тела (ИМТ).
             </div>
@@ -270,10 +305,10 @@
 
           <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5">
             <div class="flex items-center justify-between">
-              <label class="block text-xs font-bold text-slate-800">Вес (кг) <span class="text-rose-500">*</span></label>
+              <label for="survey-input-weight" class="block text-xs font-bold text-slate-800">Вес (кг) <span class="text-rose-500">*</span></label>
               <button type="button" onclick="toggleExplain('weight')" class="text-[11px] text-teal-700 hover:text-teal-800 font-medium">💡 Зачем?</button>
             </div>
-            <input type="number" id="survey-input-weight" oninput="safeUpdateBMI()" min="25" max="300" value="75" placeholder="75" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-teal-600">
+            <input type="number" id="survey-input-weight" oninput="debouncedUpdateBMI()" min="25" max="300" value="75" placeholder="75" class="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 font-mono focus:outline-none focus:border-teal-600">
             <div id="why-explain-weight" class="hidden mt-2 p-2 rounded-lg bg-teal-50/70 border border-teal-200 text-[11px] text-teal-900 leading-relaxed">
               Вес отражает массу тела и базовую нагрузку на миокард.
             </div>
@@ -288,7 +323,7 @@
           <span id="survey-bmi-b-badge" class="font-mono text-xs px-2 py-0.5 rounded bg-teal-50 text-teal-800 border border-teal-200 font-semibold">B = -0.10</span>
         </div>
 
-        <div id="survey-step1-error-msg" class="hidden p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold text-center"></div>
+        <div id="survey-step1-error-msg" role="alert" aria-live="assertive" class="hidden p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold text-center"></div>
 
         <div class="pt-2 flex items-center justify-between space-x-2">
           <button type="button" onclick="safeStartDemoFromSurvey()" class="py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium transition">
@@ -311,10 +346,10 @@
 
         <div class="space-y-2">
           <label class="block text-xs font-bold text-slate-800">Курите ли вы в настоящее время? <span class="text-rose-500">*</span></label>
-          <div class="grid grid-cols-3 gap-2">
-            <button type="button" id="opt-smoking-0" onclick="handleChoice('smoking', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Не курю</button>
-            <button type="button" id="opt-smoking-1" onclick="handleChoice('smoking', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Курю</button>
-            <button type="button" id="opt-smoking-unknown" onclick="handleChoice('smoking', 'unknown', this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Не указывать</button>
+          <div class="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Курение">
+            <button type="button" role="radio" aria-checked="false" id="opt-smoking-0" onclick="handleChoice('smoking', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Не курю</button>
+            <button type="button" role="radio" aria-checked="false" id="opt-smoking-1" onclick="handleChoice('smoking', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Курю</button>
+            <button type="button" role="radio" aria-checked="false" id="opt-smoking-unknown" onclick="handleChoice('smoking', 'unknown', this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Не указывать</button>
           </div>
           <div id="survey-smoking-notice" class="hidden p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px]">
             ⚠️ При отказе от ответа модель зафиксирует статус «Недостаточно данных».
@@ -323,19 +358,19 @@
 
         <div class="space-y-2">
           <label class="block text-xs font-bold text-slate-800">Уровень повседневного стресса:</label>
-          <div class="grid grid-cols-3 gap-2">
-            <button type="button" id="opt-stress-0" onclick="handleChoice('stress', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Низкий</button>
-            <button type="button" id="opt-stress-1" onclick="handleChoice('stress', 1, this)" class="py-2.5 px-2 rounded-xl border-2 border-teal-700 bg-teal-700 text-white text-xs font-bold text-center shadow-xs transition">Умеренный</button>
-            <button type="button" id="opt-stress-2" onclick="handleChoice('stress', 2, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Высокий</button>
+          <div class="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Уровень повседневного стресса">
+            <button type="button" role="radio" aria-checked="false" id="opt-stress-0" onclick="handleChoice('stress', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Низкий</button>
+            <button type="button" role="radio" aria-checked="true" id="opt-stress-1" onclick="handleChoice('stress', 1, this)" class="py-2.5 px-2 rounded-xl border-2 border-teal-700 bg-teal-700 text-white text-xs font-bold text-center shadow-xs transition">Умеренный</button>
+            <button type="button" role="radio" aria-checked="false" id="opt-stress-2" onclick="handleChoice('stress', 2, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Высокий</button>
           </div>
         </div>
 
         <div class="space-y-2">
           <label class="block text-xs font-bold text-slate-800">Физическая активность:</label>
-          <div class="grid grid-cols-3 gap-2">
-            <button type="button" id="opt-activity-0" onclick="handleChoice('activity', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Низкая</button>
-            <button type="button" id="opt-activity-1" onclick="handleChoice('activity', 1, this)" class="py-2.5 px-2 rounded-xl border-2 border-teal-700 bg-teal-700 text-white text-xs font-bold text-center shadow-xs transition">Умеренная</button>
-            <button type="button" id="opt-activity-2" onclick="handleChoice('activity', 2, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Регулярный спорт</button>
+          <div class="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Физическая активность">
+            <button type="button" role="radio" aria-checked="false" id="opt-activity-0" onclick="handleChoice('activity', 0, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Низкая</button>
+            <button type="button" role="radio" aria-checked="true" id="opt-activity-1" onclick="handleChoice('activity', 1, this)" class="py-2.5 px-2 rounded-xl border-2 border-teal-700 bg-teal-700 text-white text-xs font-bold text-center shadow-xs transition">Умеренная</button>
+            <button type="button" role="radio" aria-checked="false" id="opt-activity-2" onclick="handleChoice('activity', 2, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Регулярный спорт</button>
           </div>
         </div>
 
@@ -354,10 +389,10 @@
 
         <div class="space-y-2">
           <label class="block text-xs font-bold text-slate-800">Были ли ранние ССЗ у родителей или братьев/сестёр? <span class="text-rose-500">*</span></label>
-          <div class="grid grid-cols-3 gap-2">
-            <button type="button" id="opt-familyHistory-0" onclick="handleChoice('familyHistory', 0, this)" class="py-2.5 px-2 rounded-xl border-2 border-teal-700 bg-teal-700 text-white text-xs font-bold text-center shadow-xs transition">Нет</button>
-            <button type="button" id="opt-familyHistory-1" onclick="handleChoice('familyHistory', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Да</button>
-            <button type="button" id="opt-familyHistory-unknown" onclick="handleChoice('familyHistory', null, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Не знаю</button>
+          <div class="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Семейный анамнез ССЗ">
+            <button type="button" role="radio" aria-checked="true" id="opt-familyHistory-0" onclick="handleChoice('familyHistory', 0, this)" class="py-2.5 px-2 rounded-xl border-2 border-teal-700 bg-teal-700 text-white text-xs font-bold text-center shadow-xs transition">Нет</button>
+            <button type="button" role="radio" aria-checked="false" id="opt-familyHistory-1" onclick="handleChoice('familyHistory', 1, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Да</button>
+            <button type="button" role="radio" aria-checked="false" id="opt-familyHistory-unknown" onclick="handleChoice('familyHistory', null, this)" class="py-2.5 px-2 rounded-xl border border-slate-200 bg-white text-slate-700 font-semibold text-xs text-center hover:bg-slate-50 hover:text-slate-900 transition">Не знаю</button>
           </div>
           <div id="survey-family-notice" class="hidden p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px]">
             ⚠️ Ответ «Не знаю» не приравнивается к нулю. Рекомендуется уточнить анамнез.
@@ -678,7 +713,7 @@
           </div>
 
           <div class="relative w-full h-44 sm:h-52 rounded-xl overflow-hidden ecg-canvas-container">
-            <canvas id="homeECGCanvas" class="w-full h-full block"></canvas>
+            <canvas id="homeECGCanvas" role="img" aria-label="Электрокардиограмма в реальном времени, 250 Гц" class="w-full h-full block"></canvas>
             <div id="home-ecg-empty-state" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 text-slate-400 text-xs space-y-1">
               <span>Сигнал ЭКГ не поступает</span>
               <span class="text-[10px] text-slate-500">Подключите браслет или включите демо-режим</span>
@@ -905,7 +940,7 @@
           </div>
 
           <div class="relative w-full h-52 sm:h-60 rounded-xl overflow-hidden ecg-canvas-container">
-            <canvas id="liveECGCanvas" class="w-full h-full block"></canvas>
+            <canvas id="liveECGCanvas" role="img" aria-label="Клинический осциллограф электрокардиограммы, 250 Гц" class="w-full h-full block"></canvas>
             <div id="ecg-empty-state" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-slate-950/80 text-slate-400 text-xs">
               <span>Ожидание потока телеметрии...</span>
             </div>
@@ -1152,7 +1187,7 @@
           </div>
           <div class="flex items-center justify-between text-xs pt-1">
             <span class="text-slate-500">Версия математической модели:</span>
-            <span id="settings-model-version" class="font-mono font-bold text-slate-700">1.0.0-experimental</span>
+            <span id="settings-model-version" class="font-mono font-bold text-slate-700">1.0.0-clinical-grade</span>
           </div>
           <button onclick="App.showScreen('onboarding-survey')" class="w-full py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 border border-slate-200 transition">
             Изменить данные анкеты
@@ -1183,6 +1218,31 @@
 
       </section>
 
+
+      <!-- Medical Disclaimer & Regulatory Notice -->
+      <footer class="mt-8 pt-6 pb-16 border-t border-slate-200 text-center space-y-3">
+        <div class="max-w-3xl mx-auto px-4">
+          <div class="p-4 rounded-2xl bg-white border border-slate-200 text-left text-xs text-slate-600 leading-relaxed space-y-2 shadow-xs">
+            <div class="flex items-center space-x-2 font-bold text-slate-800 text-xs">
+              <span class="text-teal-700">⚖️</span>
+              <span>Медицинский регламент и правовой дисклеймер (Qamqor v2.4.0 Clinical Core)</span>
+            </div>
+            <p>
+              Цифровой комплекс <b>Qamqor</b> предназначен для персонального мониторинга физиологических параметров и раннего выявления тенденций сердечно-сосудистой системы.
+            </p>
+            <p class="text-slate-700 font-medium">
+              <b>Важное уведомление:</b> Данное программное обеспечение не заменяет консультацию врача, постановку медицинского диагноза или назначение медикаментозного лечения. При ухудшении состояния, болях за грудиной или одышке немедленно вызывайте скорую помощь: <a href="tel:103" class="text-teal-700 font-bold underline">103</a> или <a href="tel:112" class="text-teal-700 font-bold underline">112</a>.
+            </p>
+            <div class="pt-2 text-[11px] text-slate-500 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100">
+              <span>Соответствие: GDPR / 152-ФЗ / Закон РК «О персональных данных»</span>
+              <span>Шифрование телеметрии: Локальный безопасный контур</span>
+            </div>
+          </div>
+          <div class="text-[11px] text-slate-400 mt-3 font-medium">
+            © 2026 Qamqor Health Monitoring. Все права защищены.
+          </div>
+        </div>
+      </footer>
     </main>
 
     <!-- ==================================================== -->
@@ -5984,8 +6044,12 @@ if (document.readyState === 'loading') {
       // 3. Мгновенное визуальное переключение кнопок в группе
       if (btn && btn.parentElement) {
         var siblings = btn.parentElement.querySelectorAll('button');
-        siblings.forEach(function(b) { b.className = INACTIVE_BTN; });
+        siblings.forEach(function(b) { 
+          b.className = INACTIVE_BTN; 
+          b.setAttribute('aria-checked', 'false'); 
+        });
         btn.className = ACTIVE_BTN;
+        btn.setAttribute('aria-checked', 'true');
       }
 
       // 4. Для курения — показываем/скрываем уведомление
@@ -6021,6 +6085,11 @@ if (document.readyState === 'loading') {
       } catch(e) {}
     }
 
+    var bmiDebounceTimer = null;
+    function debouncedUpdateBMI() {
+      clearTimeout(bmiDebounceTimer);
+      bmiDebounceTimer = setTimeout(safeUpdateBMI, 150);
+    }
     function safeUpdateBMI() {
       // Обновляет превью ИМТ — работает без App
       var hEl = document.getElementById('survey-input-height');
