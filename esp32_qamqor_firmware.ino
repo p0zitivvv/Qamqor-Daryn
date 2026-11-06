@@ -155,11 +155,11 @@ void loop() {
   if (deviceConnected && (now - lastTelemetrySendTime >= TELEMETRY_INTERVAL_MS)) {
     lastTelemetrySendTime = now;
 
-    // Формирование JSON-строки для PWA
+    // Формирование JSON-строки для PWA (передаем 0 при отсутствии контакта с датчиком, без фейковых замен)
     char payload[64];
     snprintf(payload, sizeof(payload), "{\"bpm\":%u,\"spo2\":%u,\"ecg\":%u}", 
-             currentBPM > 0 ? currentBPM : 72, 
-             currentSpO2 > 0 ? currentSpO2 : 98, 
+             currentBPM, 
+             currentSpO2, 
              currentECG);
 
     pCharacteristic->setValue((uint8_t*)payload, strlen(payload));

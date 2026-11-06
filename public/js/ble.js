@@ -153,15 +153,23 @@ export class BLEService {
         }
       }
 
+      // 4. Определение активности реальных датчиков
+      const hasActivePulse = pulseValidation && pulseValidation.isValid && pulseValidation.bpm > 0;
+      const hasActiveECG = typeof ecg === 'number' && ecg > 10 && ecg < 4085 && ecg !== 2048;
+      const hasValidSensors = hasActivePulse || hasActiveECG;
+
       if (this.onTelemetry) {
         this.onTelemetry({
           bpm: pulseValidation.isValid ? pulseValidation.bpm : null,
           spo2: pulseValidation.isValid ? pulseValidation.spo2 : null,
           rawBpm: bpm,
           rawSpO2: spo2,
-          ecg: typeof ecg === 'number' ? ecg : null,
+          ecg: (hasActiveECG && typeof ecg === 'number') ? ecg : null,
           pulseValidation,
           ecgQuality,
+          hasValidSensors,
+          hasActivePulse,
+          hasActiveECG,
           rPeak: peakResult ? peakResult.peakDetected : false,
           instantaneousBpm: peakResult ? peakResult.instantaneousBpm : null,
           rrIntervals: this.rPeakDetector.getValidRRIntervals(),

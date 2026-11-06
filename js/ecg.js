@@ -12,6 +12,7 @@ export class ECGCanvasService {
     this.isPaused = false;
     this.currentBpm = 72;
     this.realECGQueue = [];
+    this.allowSynthetic = false;
   }
 
   init(canvasConfigs) {
@@ -37,8 +38,9 @@ export class ECGCanvasService {
     }
   }
 
-  setStreamActive(active) {
+  setStreamActive(active, allowSynthetic = false) {
     this.hasStream = active;
+    this.allowSynthetic = allowSynthetic;
     if (this.canvases.length === 0) {
       this.init([
         { canvasId: 'homeECGCanvas', emptyStateId: 'home-ecg-empty-state', statusPillId: 'home-ecg-status-pill' },
@@ -51,15 +53,26 @@ export class ECGCanvasService {
     this.canvases.forEach(item => {
       if (!item.emptyState) item.emptyState = document.getElementById(item.id === 'homeECGCanvas' ? 'home-ecg-empty-state' : 'ecg-empty-state');
       if (!item.statusPill) item.statusPill = document.getElementById(item.id === 'homeECGCanvas' ? 'home-ecg-status-pill' : 'ecg-status-pill');
+      
+      const hasLiveStream = active && (this.allowSynthetic || this.realECGQueue.length > 0);
       if (item.emptyState) {
-        if (active) item.emptyState.classList.add('hidden');
+        if (hasLiveStream) item.emptyState.classList.add('hidden');
         else item.emptyState.classList.remove('hidden');
       }
       if (item.statusPill) {
-        item.statusPill.textContent = active ? 'LIVE 250 Гц' : 'Ожидание';
-        item.statusPill.className = active
-          ? 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-semibold'
-          : 'text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 font-medium';
+        if (!active) {
+          item.statusPill.textContent = 'Ожидание';
+          item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 font-medium';
+        } else if (this.allowSynthetic) {
+          item.statusPill.textContent = 'ДЕМО 250 Гц';
+          item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-mono font-semibold';
+        } else if (this.realECGQueue.length > 0) {
+          item.statusPill.textContent = 'LIVE 250 Гц';
+          item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-semibold';
+        } else {
+          item.statusPill.textContent = 'Ожидание ЭКГ';
+          item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 font-mono font-medium';
+        }
       }
     });
   }
@@ -157,14 +170,18 @@ export class ECGCanvasService {
       // Генерация или считывание отсчета
       if (this.hasStream && !this.isPaused) {
         let sample = 0;
+        let hasSample = false;
+
         if (this.realECGQueue.length > 0) {
           sample = this.realECGQueue.shift();
-        } else {
-          sample = this.generateSyntheticECG(now, this.currentBpm);
+          hasSample = true;
+        } else if (this.allowSynthetic) {
+          sample = this.generateSyntheticECG(now, this.currentBpm || 72);
+          hasSample = true;
         }
 
         const midY = h / 2;
-        const y = midY - (sample * (h * 0.38));
+        const y = hasSample ? (midY - (sample * (h * 0.38))) : midY;
 
         const curX = Math.floor(item.sweepX);
         item.buffer[curX] = y;
@@ -172,6 +189,12 @@ export class ECGCanvasService {
           item.buffer[curX + 1] = y;
         }
         item.sweepX = (item.sweepX + 2) % w;
+
+        // Обновляем видимость заглушки при появлении реального потока
+        if (item.emptyState) {
+          if (hasSample) item.emptyState.classList.add('hidden');
+          else item.emptyState.classList.remove('hidden');
+        }
       }
 
       // 1. Отрисовка темного медицинского фона

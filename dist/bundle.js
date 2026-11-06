@@ -2011,15 +2011,23 @@ class BLEService {
         }
       }
 
+      // 4. Определение активности реальных датчиков
+      const hasActivePulse = pulseValidation && pulseValidation.isValid && pulseValidation.bpm > 0;
+      const hasActiveECG = typeof ecg === 'number' && ecg > 10 && ecg < 4085 && ecg !== 2048;
+      const hasValidSensors = hasActivePulse || hasActiveECG;
+
       if (this.onTelemetry) {
         this.onTelemetry({
           bpm: pulseValidation.isValid ? pulseValidation.bpm : null,
           spo2: pulseValidation.isValid ? pulseValidation.spo2 : null,
           rawBpm: bpm,
           rawSpO2: spo2,
-          ecg: typeof ecg === 'number' ? ecg : null,
+          ecg: (hasActiveECG && typeof ecg === 'number') ? ecg : null,
           pulseValidation,
           ecgQuality,
+          hasValidSensors,
+          hasActivePulse,
+          hasActiveECG,
           rPeak: peakResult ? peakResult.peakDetected : false,
           instantaneousBpm: peakResult ? peakResult.instantaneousBpm : null,
           rrIntervals: this.rPeakDetector.getValidRRIntervals(),
@@ -2159,6 +2167,7 @@ class ECGCanvasService {
     this.isPaused = false;
     this.currentBpm = 72;
     this.realECGQueue = [];
+    this.allowSynthetic = false;
   }
 
   init(canvasConfigs) {
@@ -2184,8 +2193,9 @@ class ECGCanvasService {
     }
   }
 
-  setStreamActive(active) {
+  setStreamActive(active, allowSynthetic = false) {
     this.hasStream = active;
+    this.allowSynthetic = allowSynthetic;
     if (this.canvases.length === 0) {
       this.init([
         { canvasId: 'homeECGCanvas', emptyStateId: 'home-ecg-empty-state', statusPillId: 'home-ecg-status-pill' },
@@ -2198,15 +2208,26 @@ class ECGCanvasService {
     this.canvases.forEach(item => {
       if (!item.emptyState) item.emptyState = document.getElementById(item.id === 'homeECGCanvas' ? 'home-ecg-empty-state' : 'ecg-empty-state');
       if (!item.statusPill) item.statusPill = document.getElementById(item.id === 'homeECGCanvas' ? 'home-ecg-status-pill' : 'ecg-status-pill');
+      
+      const hasLiveStream = active && (this.allowSynthetic || this.realECGQueue.length > 0);
       if (item.emptyState) {
-        if (active) item.emptyState.classList.add('hidden');
+        if (hasLiveStream) item.emptyState.classList.add('hidden');
         else item.emptyState.classList.remove('hidden');
       }
       if (item.statusPill) {
-        item.statusPill.textContent = active ? 'LIVE 250 Гц' : 'Ожидание';
-        item.statusPill.className = active
-          ? 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-semibold'
-          : 'text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 font-medium';
+        if (!active) {
+          item.statusPill.textContent = 'Ожидание';
+          item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 font-medium';
+        } else if (this.allowSynthetic) {
+          item.statusPill.textContent = 'ДЕМО 250 Гц';
+          item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-mono font-semibold';
+        } else if (this.realECGQueue.length > 0) {
+          item.statusPill.textContent = 'LIVE 250 Гц';
+          item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-semibold';
+        } else {
+          item.statusPill.textContent = 'Ожидание ЭКГ';
+          item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 font-mono font-medium';
+        }
       }
     });
   }
@@ -2304,14 +2325,18 @@ class ECGCanvasService {
       // Генерация или считывание отсчета
       if (this.hasStream && !this.isPaused) {
         let sample = 0;
+        let hasSample = false;
+
         if (this.realECGQueue.length > 0) {
           sample = this.realECGQueue.shift();
-        } else {
-          sample = this.generateSyntheticECG(now, this.currentBpm);
+          hasSample = true;
+        } else if (this.allowSynthetic) {
+          sample = this.generateSyntheticECG(now, this.currentBpm || 72);
+          hasSample = true;
         }
 
         const midY = h / 2;
-        const y = midY - (sample * (h * 0.38));
+        const y = hasSample ? (midY - (sample * (h * 0.38))) : midY;
 
         const curX = Math.floor(item.sweepX);
         item.buffer[curX] = y;
@@ -2319,6 +2344,12 @@ class ECGCanvasService {
           item.buffer[curX + 1] = y;
         }
         item.sweepX = (item.sweepX + 2) % w;
+
+        // Обновляем видимость заглушки при появлении реального потока
+        if (item.emptyState) {
+          if (hasSample) item.emptyState.classList.add('hidden');
+          else item.emptyState.classList.remove('hidden');
+        }
       }
 
       // 1. Отрисовка темного медицинского фона
@@ -2411,14 +2442,16 @@ const App = {
     activeTab: 'home',                   // 'home' | 'metrics' | 'factors' | 'history' | 'settings'
     isDemo: false,
     isConnected: false,
+    deviceState: 'disconnected',         // 'disconnected' | 'connected_no_data' | 'connected_receiving' | 'connection_lost'
     deviceName: 'Qamqor Band',
 
-    // Текущие биометрические показатели
-    bpm: 72,
-    spo2: 98,
-    sdnn: 48,
-    pIrr: 0.02,
+    // Текущие биометрические показатели (в реальном режиме по умолчанию null!)
+    bpm: null,
+    spo2: null,
+    sdnn: null,
+    pIrr: null,
     lastUpdateTime: null,
+    lastTelemetryTimestamp: 0,
 
     // Результаты моделирования
     lStatResult: null,
@@ -2494,17 +2527,36 @@ const App = {
     // Первоначальный расчет модели
     this.recalculateModel();
 
-    // Проверка статуса онбординга
+    // Проверка статуса онбординга и режима работы
     if (StorageService.isOnboarded()) {
       this.showScreen('main-app');
       if (StorageService.isDemoMode()) {
         this.startDemoMode();
+      } else {
+        this.setRealDeviceMode();
       }
     } else {
       // Сначала показываем анкету, потом уже подключение
       this.showScreen('onboarding-survey');
       this.goToSurveyStep(1);
     }
+
+    // Сторожевой таймер активности реальных датчиков (Watchdog)
+    setInterval(() => {
+      if (this.state.isConnected && !this.state.isDemo) {
+        if (this.state.lastTelemetryTimestamp > 0 && Date.now() - this.state.lastTelemetryTimestamp > 4500) {
+          if (this.state.deviceState === 'connected_receiving') {
+            console.log('[BLE Watchdog] Поток измерений прекращен, переключение в connected_no_data');
+            this.state.deviceState = 'connected_no_data';
+            this.state.bpm = null;
+            this.state.spo2 = null;
+            this.updateConnectionUI();
+            this.recalculateModel();
+            this.renderDashboardMetrics();
+          }
+        }
+      }
+    }, 2000);
 
     // Минутный таймер для дискретного шага EMA-сглаживания и FSM тревог
     setInterval(() => this.stepCalculationMinute(), 60000);
@@ -2632,7 +2684,7 @@ const App = {
         this.populateSettingsTab();
       } else if (tabId === 'home' || tabId === 'metrics') {
         if (this.ecgCanvas) {
-          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected);
+          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected, this.state.isDemo);
         }
       }
     } catch(err) {
@@ -2643,16 +2695,27 @@ const App = {
   },
 
   // ========================================================
-  // ОБРАБОТКА ПОСТУПЛЕНИЯ ДАННЫХ
+  // ОБРАБОТКА ПОСТУПЛЕНИЯ ДАННЫХ И СОСТОЯНИЙ BLE
   // ========================================================
   handleBLETelemetry(data) {
-    if (data.bpm) this.state.bpm = data.bpm;
-    if (data.spo2) this.state.spo2 = data.spo2;
-    if (data.ecg && this.ecgCanvas) {
+    if (this.state.isDemo) return; // Игнорируем в демо-режиме
+
+    const hasPulse = data.bpm != null && data.bpm > 0 && data.spo2 != null && data.spo2 > 0;
+    const hasActiveECG = data.ecg != null && (!data.ecgQuality || data.ecgQuality.isValid);
+
+    if (hasPulse || hasActiveECG || data.hasValidSensors) {
+      this.state.deviceState = 'connected_receiving';
+      this.state.lastTelemetryTimestamp = Date.now();
+    }
+
+    if (data.bpm != null && data.bpm > 0) this.state.bpm = data.bpm;
+    if (data.spo2 != null && data.spo2 > 0) this.state.spo2 = data.spo2;
+
+    if (data.ecg != null && this.ecgCanvas) {
       this.ecgCanvas.pushRealSample(data.ecg);
     }
     if (this.ecgCanvas) {
-      this.ecgCanvas.setStreamActive(true);
+      this.ecgCanvas.setStreamActive(true, false);
       if (this.state.bpm) this.ecgCanvas.setBPM(this.state.bpm);
     }
 
@@ -2663,28 +2726,67 @@ const App = {
       } catch(e) {
         console.warn('SDNN/pIrr calculation error:', e);
       }
-      this.recalculateModel();
-    } else {
-      this.recalculateModel();
     }
+
+    this.recalculateModel();
+    this.updateConnectionUI();
+    this.renderDashboardMetrics();
   },
 
   handleBLEStatusChange(status) {
     this.state.isConnected = status.connected;
-    this.updateConnectionUI();
     if (status.connected) {
-      this.showToast(`Браслет ${status.deviceName} подключен`, 'success');
-      this.ecgCanvas.setStreamActive(true);
+      this.state.deviceState = 'connected_no_data';
+      this.state.deviceName = status.deviceName || 'Qamqor Band';
+      this.showToast(`Браслет ${this.state.deviceName} подключен. Ожидаем данные с датчиков.`, 'success');
+      if (this.ecgCanvas) {
+        this.ecgCanvas.setStreamActive(true, false); // allowSynthetic = false
+      }
     } else {
+      this.state.deviceState = (status.statusText && status.statusText.includes('потеряна')) ? 'connection_lost' : 'disconnected';
+      this.clearBiometrics();
       this.showToast('Связь с браслетом разорвана', 'warning');
-      this.ecgCanvas.setStreamActive(false);
+      if (this.ecgCanvas) {
+        this.ecgCanvas.setStreamActive(false, false);
+      }
     }
+    this.updateConnectionUI();
+    this.recalculateModel();
+    this.renderDashboardMetrics();
   },
 
   handleBLEError(err) {
     if (err.name !== 'NotFoundError') {
       this.showToast(`Ошибка BLE: ${err.message}`, 'warning');
     }
+  },
+
+  clearBiometrics() {
+    this.state.bpm = null;
+    this.state.spo2 = null;
+    this.state.sdnn = null;
+    this.state.pIrr = null;
+    this.state.lastUpdateTime = null;
+    this.state.lDynResult = null;
+    this.state.modelEvaluation = null;
+    this.state.qualityResult = null;
+    if (this.ecgCanvas) {
+      this.ecgCanvas.realECGQueue = [];
+    }
+  },
+
+  setRealDeviceMode() {
+    this.demoSimulator.stop();
+    this.state.isDemo = false;
+    StorageService.setDemoMode(false);
+    this.clearBiometrics();
+    if (this.ecgCanvas) {
+      this.ecgCanvas.setStreamActive(this.state.isConnected, false);
+    }
+    this.updateConnectionUI();
+    this.recalculateModel();
+    this.renderDashboardMetrics();
+    console.log('[Qamqor] Режим реального устройства активирован. Демо-данные очищены.');
   },
 
   // ========================================================
@@ -2701,10 +2803,13 @@ const App = {
   startDemoMode() {
     this.state.isDemo = true;
     this.state.isConnected = false;
+    this.state.deviceState = 'disconnected';
     StorageService.setDemoMode(true);
     this.updateConnectionUI();
 
-    this.ecgCanvas.setStreamActive(true);
+    if (this.ecgCanvas) {
+      this.ecgCanvas.setStreamActive(true, true); // allowSynthetic = true
+    }
 
     this.demoSimulator.start((sample) => {
       this.state.bpm = sample.bpm;
@@ -2716,14 +2821,11 @@ const App = {
       }
       this.recalculateModel();
     });
+    this.showToast('Демо-режим симулятора запущен.', 'info');
   },
 
   stopDemoMode() {
-    this.demoSimulator.stop();
-    this.state.isDemo = false;
-    StorageService.setDemoMode(false);
-    this.updateConnectionUI();
-    this.ecgCanvas.setStreamActive(false);
+    this.setRealDeviceMode();
   },
 
   setDemoScenario(scenario) {
@@ -2757,6 +2859,25 @@ const App = {
       }
     } else {
       this.state.lStatResult = null;
+    }
+
+    // Если в реальном режиме нет данных с датчиков пульса/SpO2 — динамический расчёт невозможен
+    if (!this.state.isDemo && (this.state.bpm == null || this.state.spo2 == null)) {
+      this.state.lDynResult = null;
+      this.state.qualityResult = { c_q: 0, c_base: 0, c: 0, percentage: 0, label: 'Ожидание измерений' };
+      this.state.modelEvaluation = evaluateModel({
+        lStat: this.state.lStatResult ? this.state.lStatResult.lStat : null,
+        lDyn: null,
+        c: 0
+      });
+      this.state.recommendations = [];
+      this.state.improvementPlan = [];
+      this.state.lastUpdateTime = null;
+      this.renderDashboardMetrics();
+      if (this.state.activeTab === 'factors') {
+        this.renderFactorsTab();
+      }
+      return;
     }
 
     // 2. Динамическая часть L_dyn
@@ -2916,10 +3037,18 @@ const App = {
 
     // ЧСС и SpO2
     const bpmVal = document.getElementById('home-metric-bpm-val');
-    if (bpmVal) bpmVal.textContent = this.state.bpm != null ? this.state.bpm : '72';
+    if (bpmVal) {
+      bpmVal.textContent = this.state.isDemo 
+        ? (this.state.bpm || '72') 
+        : (this.state.bpm != null ? this.state.bpm : '—');
+    }
 
     const spo2Val = document.getElementById('home-metric-spo2-val');
-    if (spo2Val) spo2Val.textContent = this.state.spo2 != null ? `${this.state.spo2}%` : '98%';
+    if (spo2Val) {
+      spo2Val.textContent = this.state.isDemo 
+        ? `${this.state.spo2 || 98}%` 
+        : (this.state.spo2 != null ? `${this.state.spo2}%` : '—');
+    }
 
     // Проверка анкеты и качества данных c < 0.5
     const isSurveyValid = this.state.surveyValidation ? this.state.surveyValidation.isValid : false;
@@ -2931,29 +3060,46 @@ const App = {
     const statusEl = document.getElementById('home-index-status-desc');
 
     if (!isSurveyValid) {
-      if (numEl) numEl.innerHTML = '<span class="text-xl text-amber-400 font-bold">Анкета не завершена</span>';
+      if (numEl) numEl.innerHTML = '<span class="text-xl text-amber-600 font-bold">Анкета не завершена</span>';
       if (barEl) {
         barEl.style.width = '0%';
-        barEl.className = 'bg-slate-700 h-2.5 rounded-full';
+        barEl.className = 'bg-slate-200 h-2.5 rounded-full';
       }
       if (zoneEl) {
         zoneEl.textContent = 'Требуется завершить анкету';
-        zoneEl.className = 'text-xs font-bold text-amber-400';
+        zoneEl.className = 'text-xs font-bold text-amber-700';
       }
       if (statusEl) {
-        statusEl.innerHTML = '<button onclick="App.startSurveyWizard()" class="text-cyan-400 font-semibold underline decoration-dotted hover:text-cyan-300">Нажмите здесь, чтобы ответить на вопросы модели</button>';
+        statusEl.innerHTML = '<button onclick="App.startSurveyWizard()" class="text-teal-700 font-semibold underline decoration-dotted hover:text-teal-800">Нажмите здесь, чтобы ответить на вопросы модели</button>';
+      }
+      this._updateGauge(null, 'none');
+    } else if (!this.state.isDemo && (this.state.bpm == null || this.state.spo2 == null)) {
+      // Реальный режим без активного контакта с датчиками
+      if (numEl) numEl.innerHTML = '<span class="text-3xl text-slate-400 font-extrabold">—</span>';
+      if (barEl) {
+        barEl.style.width = '0%';
+        barEl.className = 'bg-slate-200 h-2.5 rounded-full';
+      }
+      if (zoneEl) {
+        zoneEl.textContent = this.state.deviceState === 'connected_no_data' ? 'Ожидание измерений' : 'Устройство не подключено';
+        zoneEl.className = 'text-xs font-semibold text-slate-500';
+      }
+      if (statusEl) {
+        statusEl.textContent = this.state.deviceState === 'connected_no_data'
+          ? 'Браслет подключён по BLE. Закрепите браслет на запястье и коснитесь датчика MAX30102.'
+          : 'Подключите браслет Qamqor по Bluetooth для сбора телеметрии.';
       }
       this._updateGauge(null, 'none');
     } else if (!isQualitySufficient) {
       // ПРАВИЛО 1 & 6: При c < 0.5 не показывать число как достоверный результат
-      if (numEl) numEl.innerHTML = '<span class="text-2xl text-amber-400 font-bold">Недостаточно данных</span>';
+      if (numEl) numEl.innerHTML = '<span class="text-2xl text-amber-600 font-bold">Недостаточно данных</span>';
       if (barEl) {
         barEl.style.width = '0%';
-        barEl.className = 'bg-slate-700 h-2.5 rounded-full';
+        barEl.className = 'bg-slate-200 h-2.5 rounded-full';
       }
       if (zoneEl) {
         zoneEl.textContent = 'Расчет приостановлен (c < 0.5)';
-        zoneEl.className = 'text-xs font-bold text-amber-400';
+        zoneEl.className = 'text-xs font-bold text-amber-700';
       }
       if (statusEl) {
         statusEl.textContent = 'Проверьте контакт датчиков на запястье и повторите замер в покое.';
@@ -2975,9 +3121,9 @@ const App = {
         zoneEl.textContent = zone === 'red' ? 'Красная зона (40–100: повышенная нагрузка)' :
                              zone === 'yellow' ? 'Жёлтая зона (20–39: умеренное внимание)' :
                              'Зелёная зона (0–19: нормальное состояние)';
-        zoneEl.className = zone === 'red' ? 'text-xs font-bold text-rose-400' :
-                           zone === 'yellow' ? 'text-xs font-bold text-amber-400' :
-                           'text-xs font-bold text-emerald-400';
+        zoneEl.className = zone === 'red' ? 'text-xs font-bold text-rose-600' :
+                           zone === 'yellow' ? 'text-xs font-bold text-amber-600' :
+                           'text-xs font-bold text-emerald-600';
       }
       if (statusEl) {
         statusEl.textContent = zone === 'red' ? 'Рекомендуется отдых и снижение нагрузки' :
@@ -2993,6 +3139,8 @@ const App = {
       if (this.state.recommendations.length > 0) {
         const topRec = this.state.recommendations[0];
         quickTipEl.innerHTML = `<b>${topRec.title}:</b> ${topRec.action}`;
+      } else if (!this.state.isDemo && this.state.bpm == null) {
+        quickTipEl.textContent = 'Ожидание измерений браслета для формирования индивидуальных рекомендаций.';
       } else {
         quickTipEl.textContent = 'Показатели стабильны. Поддерживайте водный баланс и регулярно проветривайте помещение.';
       }
@@ -3000,14 +3148,31 @@ const App = {
 
     // Дополнительные селекторы для вкладки Мониторинг и Мой риск
     const mBpm = document.getElementById('metric-bpm');
-    if (mBpm) mBpm.textContent = this.state.bpm != null ? this.state.bpm : '72';
+    if (mBpm) {
+      mBpm.textContent = this.state.isDemo 
+        ? (this.state.bpm || '72') 
+        : (this.state.bpm != null ? this.state.bpm : '—');
+    }
     const mSpo2 = document.getElementById('metric-spo2');
-    if (mSpo2) mSpo2.textContent = this.state.spo2 != null ? `${this.state.spo2}%` : '98%';
+    if (mSpo2) {
+      mSpo2.textContent = this.state.isDemo 
+        ? `${this.state.spo2 || 98}%` 
+        : (this.state.spo2 != null ? `${this.state.spo2}%` : '—');
+    }
     const mSdnn = document.getElementById('metric-sdnn');
-    if (mSdnn) mSdnn.textContent = this.state.sdnn != null ? Math.round(this.state.sdnn) : '48';
+    if (mSdnn) {
+      mSdnn.textContent = this.state.isDemo 
+        ? Math.round(this.state.sdnn || 48) 
+        : (this.state.sdnn != null ? Math.round(this.state.sdnn) : '—');
+    }
     const mRiskVal = document.getElementById('risk-index-value');
-    if (mRiskVal && this.state.modelEvaluation && this.state.modelEvaluation.index != null) {
-      mRiskVal.textContent = this.state.modelEvaluation.index;
+    if (mRiskVal) {
+      if (this.state.isDemo) {
+        mRiskVal.textContent = (this.state.modelEvaluation && this.state.modelEvaluation.index != null) ? this.state.modelEvaluation.index : '18';
+      } else {
+        mRiskVal.textContent = (this.state.modelEvaluation && this.state.modelEvaluation.index != null) ? this.state.modelEvaluation.index : '—';
+      }
+    }
     }
 
     this.renderRecentMeasurementsTable();
@@ -3205,35 +3370,86 @@ const App = {
     const dot = document.getElementById('app-connection-indicator-dot');
     const label = document.getElementById('app-connection-indicator-text');
     const demoBar = document.getElementById('demo-mode-alert-bar');
+    const realBar = document.getElementById('real-device-alert-bar');
     const sDot = document.getElementById('sidebar-device-dot');
     const sLabel = document.getElementById('sidebar-device-label');
     const sBadge = document.getElementById('sidebar-device-status-badge');
+    const sensorStatusText = document.getElementById('home-sensor-status-subtitle');
 
     if (this.state.isDemo) {
       if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-500 animate-pulse';
       if (label) label.textContent = 'Деморежим';
       if (demoBar) demoBar.classList.remove('hidden');
+      if (realBar) realBar.classList.add('hidden');
       if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-amber-500 animate-pulse';
       if (sLabel) sLabel.textContent = 'Демо-режим активен';
-      if (sBadge) sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-medium';
+      if (sBadge) {
+        sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-medium';
+        sBadge.textContent = 'Симуляция';
+      }
+      if (sensorStatusText) sensorStatusText.textContent = 'Генерация виртуальных биосигналов';
     } else if (this.state.isConnected) {
-      if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
-      if (label) label.textContent = 'Подключено (BLE)';
       if (demoBar) demoBar.classList.add('hidden');
-      if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
-      if (sLabel) sLabel.textContent = 'Qamqor Band • BLE';
-      if (sBadge) sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-medium';
+
+      if (this.state.deviceState === 'connected_receiving') {
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+        if (label) label.textContent = 'Подключено (BLE)';
+        if (realBar) realBar.classList.add('hidden');
+        if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+        if (sLabel) sLabel.textContent = `${this.state.deviceName || 'Qamqor Band'} • Поток данных`;
+        if (sBadge) {
+          sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-medium';
+          sBadge.textContent = 'Активен';
+        }
+        if (sensorStatusText) sensorStatusText.textContent = 'Датчики MAX30102 и AD8232 активны';
+      } else {
+        // connected_no_data
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-sky-500 animate-pulse';
+        if (label) label.textContent = 'Подключено (нет данных)';
+        if (realBar) realBar.classList.remove('hidden');
+        if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-sky-500 animate-pulse';
+        if (sLabel) sLabel.textContent = `${this.state.deviceName || 'Qamqor Band'} • Ожидание пальца`;
+        if (sBadge) {
+          sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-medium';
+          sBadge.textContent = 'Ожидание';
+        }
+        if (sensorStatusText) sensorStatusText.textContent = 'Ожидание контакта с датчиком MAX30102';
+      }
     } else {
-      if (dot) dot.className = 'w-2 h-2 rounded-full bg-slate-400';
-      if (label) label.textContent = 'Не подключено';
       if (demoBar) demoBar.classList.add('hidden');
-      if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-slate-400';
-      if (sLabel) sLabel.textContent = 'Устройство не подключено';
-      if (sBadge) sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium';
+      if (realBar) realBar.classList.add('hidden');
+
+      if (this.state.deviceState === 'connection_lost') {
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-rose-500 animate-pulse';
+        if (label) label.textContent = 'Связь потеряна';
+        if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-rose-500 animate-pulse';
+        if (sLabel) sLabel.textContent = 'Связь с браслетом потеряна';
+        if (sBadge) {
+          sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-medium';
+          sBadge.textContent = 'Разрыв';
+        }
+      } else {
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-slate-400';
+        if (label) label.textContent = 'Не подключено';
+        if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-slate-400';
+        if (sLabel) sLabel.textContent = 'Устройство не подключено';
+        if (sBadge) {
+          sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium';
+          sBadge.textContent = 'Офлайн';
+        }
+      }
+      if (sensorStatusText) sensorStatusText.textContent = 'Браслет отключён';
     }
 
     const headerBleBtn = document.getElementById('header-ble-btn');
     if (headerBleBtn) {
+      if (this.state.isConnected || this.state.isDemo) {
+        headerBleBtn.classList.add('hidden');
+      } else {
+        headerBleBtn.classList.remove('hidden');
+      }
+    }
+  },
       if (this.state.isConnected || this.state.isDemo) {
         headerBleBtn.classList.add('hidden');
       } else {
@@ -3536,19 +3752,19 @@ const App = {
 
     if (connText) {
       if (isDemo) {
-        connText.innerHTML = '<span class="text-cyan-400 font-bold">● Демо-режим активен</span>';
+        connText.innerHTML = '<span class="text-teal-800 font-bold">● Демо-режим активен</span>';
       } else if (isConnected) {
-        connText.innerHTML = '<span class="text-emerald-400 font-bold">● Подключен по Bluetooth</span>';
+        connText.innerHTML = '<span class="text-emerald-800 font-bold">● Подключен по Bluetooth</span>';
       } else {
-        connText.innerHTML = '<span class="text-slate-400">○ Не подключено</span>';
+        connText.innerHTML = '<span class="text-slate-500">○ Не подключено</span>';
       }
     }
 
     if (qualityText) {
       if (isDemo || c >= 0.5) {
-        qualityText.innerHTML = `<span class="text-emerald-400 font-bold">${Math.round(c * 100)}% (Качество стабильное)</span>`;
+        qualityText.innerHTML = `<span class="text-emerald-800 font-bold">${Math.round(c * 100)}% (Качество стабильное)</span>`;
       } else if (isConnected) {
-        qualityText.innerHTML = `<span class="text-amber-400 font-bold">${Math.round(c * 100)}% (c < 0.5 — нестабилен)</span>`;
+        qualityText.innerHTML = `<span class="text-amber-800 font-bold">${Math.round(c * 100)}% (c < 0.5 — нестабилен)</span>`;
       } else {
         qualityText.innerHTML = '<span class="text-slate-500">Ожидание измерений</span>';
       }
@@ -3655,26 +3871,26 @@ const App = {
         });
 
         if (modelEval.isDataSufficient && modelEval.index != null) {
-          const zoneBadge = modelEval.zone === 'green' ? '<span class="text-emerald-400 font-bold">Зеленая зона (Низкий риск)</span>'
-            : modelEval.zone === 'yellow' ? '<span class="text-amber-400 font-bold">Желтая зона (Умеренный риск)</span>'
-            : '<span class="text-rose-400 font-bold">Красная зона (Высокий риск)</span>';
+          const zoneBadge = modelEval.zone === 'green' ? '<span class="text-emerald-700 font-bold">Зеленая зона (Низкий риск)</span>'
+            : modelEval.zone === 'yellow' ? '<span class="text-amber-700 font-bold">Желтая зона (Умеренный риск)</span>'
+            : '<span class="text-rose-700 font-bold">Красная зона (Высокий риск)</span>';
 
-          verdictContainer.className = 'p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 space-y-2';
+          verdictContainer.className = 'p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-950 space-y-2';
           verdictContainer.innerHTML = `
             <div class="flex items-center justify-between">
-              <span class="text-xs font-bold text-emerald-300 uppercase tracking-wider">✅ Все данные собраны • Расчёт готов</span>
-              <span class="text-xs font-mono font-bold text-white px-2 py-0.5 rounded bg-emerald-500/20">${modelEval.index} / 100</span>
+              <span class="text-xs font-bold text-emerald-950 uppercase tracking-wider">✅ Все данные собраны • Расчёт готов</span>
+              <span class="text-xs font-mono font-bold text-emerald-900 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded">${modelEval.index} / 100</span>
             </div>
-            <div class="text-xs text-slate-200 font-semibold">${zoneBadge}</div>
-            <p class="text-[11px] text-slate-300 leading-relaxed">
+            <div class="text-xs text-slate-800 font-semibold">${zoneBadge}</div>
+            <p class="text-xs text-slate-700 leading-relaxed font-normal">
               Математическая модель откалибрована. Базовый профиль L_stat = ${this.state.lStatResult.lStat.toFixed(2)}, динамическая составляющая учтена с качеством c = ${Math.round(c * 100)}%.
             </p>
           `;
         } else {
-          verdictContainer.className = 'p-4 rounded-xl bg-teal-50 border border-teal-200 text-teal-900 space-y-2';
+          verdictContainer.className = 'p-4 rounded-xl bg-teal-50 border border-teal-200 text-teal-950 space-y-2';
           verdictContainer.innerHTML = `
-            <div class="text-xs font-bold text-cyan-300 uppercase tracking-wider">ℹ️ Анкета сохранена • Ожидание стабильного сигнала</div>
-            <p class="text-[11px] text-slate-300 leading-relaxed">
+            <div class="text-xs font-bold text-teal-900 uppercase tracking-wider">ℹ️ Анкета сохранена • Ожидание стабильного сигнала</div>
+            <p class="text-xs text-slate-700 leading-relaxed font-normal">
               Все 6 факторов анкеты успешно заполнены. Для вычисления динамического индекса необходим устойчивый сигнал датчика (порог c ≥ 0.5). Пока датчик калибруется, система отобразит статус «Недостаточно данных».
             </p>
           `;
@@ -3682,12 +3898,12 @@ const App = {
       } else {
         // Данных анкеты недостаточно
         const missingList = validation.missing.map(m => `• <b>${m.label}:</b> ${m.reason}`).join('<br>');
-        verdictContainer.className = 'p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 space-y-2';
+        verdictContainer.className = 'p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 space-y-2';
         verdictContainer.innerHTML = `
-          <div class="text-xs font-bold text-amber-300 uppercase tracking-wider">⚠️ Расчёт индекса приостановлен (неполные данные)</div>
-          <p class="text-[11px] text-slate-300 leading-relaxed">
+          <div class="text-xs font-bold text-amber-950 uppercase tracking-wider">⚠️ Расчёт индекса приостановлен (неполные данные)</div>
+          <p class="text-xs text-slate-700 leading-relaxed font-normal">
             В соответствии со спецификацией Qamqor, математическая модель <b>не подменяет пропущенные ответы нулями или догадками</b>. Для точного расчёта не хватает следующих данных:<br>
-            <div class="mt-1 text-[11px] text-amber-200 leading-relaxed bg-black/30 p-2 rounded-lg">${missingList}</div>
+            <div class="mt-2 text-xs text-amber-950 leading-relaxed bg-amber-100/80 border border-amber-200 p-2.5 rounded-xl">${missingList}</div>
           </p>
         `;
       }
