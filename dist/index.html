@@ -427,7 +427,7 @@
         </div>
 
         <div class="space-y-2">
-          <button type="button" onclick="safeBLEConnect(true)" class="w-full py-2.5 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition flex items-center justify-center space-x-2">
+          <button type="button" id="btn-survey-ble-connect" onclick="safeBLEConnect(true)" class="w-full py-2.5 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition flex items-center justify-center space-x-2">
             <span>📶 Подключить по Bluetooth</span>
           </button>
           <button type="button" onclick="safeStartDemoFromSurvey()" class="w-full py-2.5 px-4 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-semibold text-xs transition">
@@ -6476,7 +6476,7 @@ if (document.readyState === 'loading') {
     // ============================================================
     // safeBLEConnect — улучшенное подключение по Bluetooth
     // ============================================================
-    function safeBLEConnect(fromSurvey) {
+    function safeBLEConnect(fromSurvey, _retryCount) {
       var btn = fromSurvey
         ? document.getElementById('btn-survey-ble-connect')
         : document.getElementById('btn-onboarding-connect');
@@ -6490,6 +6490,18 @@ if (document.readyState === 'loading') {
         return;
       }
 
+      // Если App ещё не инициализирован — повторим до 10 раз с задержкой 300мс
+      if (!window.App || !window.App.bleService) {
+        var retries = _retryCount || 0;
+        if (retries < 10) {
+          setTimeout(function() { safeBLEConnect(fromSurvey, retries + 1); }, 300);
+        } else {
+          if (btn) { btn.disabled = false; }
+          alert('❌ Не удалось загрузить модуль Bluetooth.\n\nПерезагрузите страницу и попробуйте снова.');
+        }
+        return;
+      }
+
       // Show loading state
       if (btn) {
         btn.disabled = true;
@@ -6497,14 +6509,7 @@ if (document.readyState === 'loading') {
         btn.innerHTML = '<svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span>Поиск браслета...</span>';
       }
 
-      var connectPromise;
-      if (window.App && window.App.bleService) {
-        connectPromise = window.App.bleService.connect();
-      } else {
-        if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.originalText || btn.innerHTML; }
-        alert('Приложение ещё загружается. Попробуйте снова.');
-        return;
-      }
+      var connectPromise = window.App.bleService.connect();
 
       connectPromise.then(function(deviceName) {
         if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.originalText; }
