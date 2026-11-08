@@ -61,7 +61,6 @@ export class BLEService {
       // 3. Получение службы и характеристики
       const service = await this.server.getPrimaryService(serviceUuid);
       this.characteristic = await service.getCharacteristic(characteristicUuid);
-
       // 4. Подписка на уведомления
       await this.characteristic.startNotifications();
       this.characteristic.addEventListener('characteristicvaluechanged', (e) => this.handlePacket(e));

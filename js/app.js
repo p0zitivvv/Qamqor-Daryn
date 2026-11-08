@@ -186,7 +186,7 @@ export const App = {
     } else if (screenId === 'main-app') {
       this.renderAll();
       if (this.state.isDemo || this.state.isConnected) {
-        this.ecgCanvas.setStreamActive(true);
+        this.ecgCanvas.setStreamActive(true, this.state.isDemo);
       }
     }
   },
@@ -290,9 +290,10 @@ export const App = {
     if (this.state.isDemo) return; // Игнорируем в демо-режиме
 
     const hasPulse = data.bpm != null && data.bpm > 0 && data.spo2 != null && data.spo2 > 0;
-    const hasActiveECG = data.ecg != null && (!data.ecgQuality || data.ecgQuality.isValid);
+    const hasActiveECG = data.hasActiveECG === true || (data.ecg != null && data.ecg > 10 && data.ecg < 4085 && data.ecg !== 2048);
+    const hasValidSensors = (data.hasValidSensors === true) || hasPulse || hasActiveECG;
 
-    if (hasPulse || hasActiveECG || data.hasValidSensors) {
+    if (hasValidSensors) {
       this.state.deviceState = 'connected_receiving';
       this.state.lastTelemetryTimestamp = Date.now();
     }
@@ -304,7 +305,7 @@ export const App = {
       this.ecgCanvas.pushRealSample(data.ecg);
     }
     if (this.ecgCanvas) {
-      this.ecgCanvas.setStreamActive(true, false);
+      this.ecgCanvas.setStreamActive(this.state.isConnected, false);
       if (this.state.bpm) this.ecgCanvas.setBPM(this.state.bpm);
     }
 
@@ -762,7 +763,6 @@ export const App = {
         mRiskVal.textContent = (this.state.modelEvaluation && this.state.modelEvaluation.index != null) ? this.state.modelEvaluation.index : '—';
       }
     }
-    }
 
     this.renderRecentMeasurementsTable();
 
@@ -1032,13 +1032,6 @@ export const App = {
 
     const headerBleBtn = document.getElementById('header-ble-btn');
     if (headerBleBtn) {
-      if (this.state.isConnected || this.state.isDemo) {
-        headerBleBtn.classList.add('hidden');
-      } else {
-        headerBleBtn.classList.remove('hidden');
-      }
-    }
-  },
       if (this.state.isConnected || this.state.isDemo) {
         headerBleBtn.classList.add('hidden');
       } else {
@@ -1544,23 +1537,37 @@ export const App = {
     const latestItems = hist.slice(0, 5);
 
     if (latestItems.length === 0) {
+      if (!this.state.isDemo && this.state.bpm == null) {
+        tableBody.innerHTML = `
+          <tr>
+            <td colspan="6" class="py-8 text-center text-xs text-slate-400">
+              <div class="flex flex-col items-center justify-center space-y-1">
+                <span>📡 Нет сохранённых измерений</span>
+                <span class="text-[11px] text-slate-500">Подключите браслет по Bluetooth и приложите палец к датчику MAX30102</span>
+              </div>
+            </td>
+          </tr>
+        `;
+        return;
+      }
       const now = new Date();
       const timeStr = now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const bpm = this.state.bpm || 72;
-      const spo2 = this.state.spo2 || 98;
-      const sdnn = Math.round(this.state.sdnn || 48);
-      const idx = this.state.modelEvaluation ? this.state.modelEvaluation.index : 18;
-      const zone = this.state.modelEvaluation ? this.state.modelEvaluation.zone : 'green';
+      const bpm = this.state.isDemo ? (this.state.bpm || 72) : (this.state.bpm || '—');
+      const spo2 = this.state.isDemo ? (this.state.spo2 || 98) : (this.state.spo2 || '—');
+      const sdnn = this.state.sdnn != null ? Math.round(this.state.sdnn) : (this.state.isDemo ? 48 : '—');
+      const idx = this.state.modelEvaluation ? this.state.modelEvaluation.index : (this.state.isDemo ? 18 : '—');
+      const zone = this.state.modelEvaluation ? this.state.modelEvaluation.zone : (this.state.isDemo ? 'green' : 'none');
       const badgeClass = zone === 'red' ? 'bg-rose-50 text-rose-700 border-rose-200' :
                          zone === 'yellow' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                         'bg-emerald-50 text-emerald-700 border-emerald-200';
-      const statusText = zone === 'red' ? 'Высокий риск' : zone === 'yellow' ? 'Внимание' : 'Норма';
+                         zone === 'green' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                         'bg-slate-50 text-slate-600 border-slate-200';
+      const statusText = zone === 'red' ? 'Высокий риск' : zone === 'yellow' ? 'Внимание' : zone === 'green' ? 'Норма' : 'Ожидание';
 
       tableBody.innerHTML = `
         <tr class="border-b border-slate-100 hover:bg-slate-50/60 transition">
           <td class="py-2.5 px-3 font-mono text-slate-500">${timeStr}</td>
           <td class="py-2.5 px-3 font-semibold text-slate-800 font-mono">${bpm} <span class="text-[10px] text-slate-400 font-sans">уд/м</span></td>
-          <td class="py-2.5 px-3 font-semibold text-slate-800 font-mono">${spo2}%</td>
+          <td class="py-2.5 px-3 font-semibold text-slate-800 font-mono">${spo2 !== '—' ? spo2 + '%' : '—'}</td>
           <td class="py-2.5 px-3 font-mono text-slate-600">${sdnn} <span class="text-[10px] text-slate-400 font-sans">мс</span></td>
           <td class="py-2.5 px-3 font-mono font-bold text-slate-900">${idx}</td>
           <td class="py-2.5 px-3 text-right">
@@ -1678,16 +1685,40 @@ export const App = {
   },
 
   populateSettingsTab() {
-    const profile = StorageService.getProfile();
+    const profile = StorageService.getProfile() || {};
     const nameEl = document.getElementById('settings-profile-name');
     const ageEl = document.getElementById('settings-profile-age');
     const bmiEl = document.getElementById('settings-profile-bmi');
     const verEl = document.getElementById('settings-model-version');
 
-    if (nameEl) nameEl.textContent = profile.name;
-    if (ageEl) ageEl.textContent = `${profile.age} лет`;
-    if (bmiEl) bmiEl.textContent = `${profile.bmi} кг/м²`;
+    if (nameEl) nameEl.textContent = profile.name || 'Пользователь';
+    if (ageEl) ageEl.textContent = `${profile.age || 40} лет`;
+    if (bmiEl) bmiEl.textContent = `${profile.bmi || 24.5} кг/м²`;
     if (verEl) verEl.textContent = MODEL_CONFIG.version;
+
+    // Режим работы
+    const badgeEl = document.getElementById('settings-current-mode-badge');
+    const btnReal = document.getElementById('btn-mode-real');
+    const btnDemo = document.getElementById('btn-mode-demo');
+
+    const activeBtnClass = 'py-2.5 px-3 rounded-xl border-2 border-teal-700 bg-teal-700 text-white text-xs font-bold text-center shadow-xs transition';
+    const inactiveBtnClass = 'py-2.5 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-semibold text-center hover:bg-slate-50 hover:text-slate-900 transition';
+
+    if (this.state.isDemo) {
+      if (badgeEl) {
+        badgeEl.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200';
+        badgeEl.textContent = 'Демо-режим';
+      }
+      if (btnDemo) btnDemo.className = activeBtnClass;
+      if (btnReal) btnReal.className = inactiveBtnClass;
+    } else {
+      if (badgeEl) {
+        badgeEl.className = 'px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200';
+        badgeEl.textContent = 'Реальное устройство';
+      }
+      if (btnReal) btnReal.className = activeBtnClass;
+      if (btnDemo) btnDemo.className = inactiveBtnClass;
+    }
   },
 
   // ========================================================
@@ -2234,9 +2265,13 @@ export const App = {
 };
 
 // Экспорт в глобальную область для onclick-хэндлеров в HTML
-window.App = App;
-if (document.readyState === 'loading') {
-  window.addEventListener('DOMContentLoaded', () => App.init());
-} else {
-  App.init();
+if (typeof window !== 'undefined') {
+  window.App = App;
+  if (typeof document !== 'undefined') {
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', () => App.init());
+    } else {
+      App.init();
+    }
+  }
 }
