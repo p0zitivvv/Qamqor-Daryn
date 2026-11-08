@@ -34,11 +34,9 @@ export class BLEService {
     this.onTelemetry = null;
     this.onStatusChange = null;
     this.onError = null;
-    this.onDiagnostic = null;
 
     this.lastPacketTime = null;
     this.lastValidMeasurement = null;
-    this.lastDiagnostic = null;
 
     this.packetCount = 0;
     this.packetBuffer = '';
@@ -274,17 +272,6 @@ export class BLEService {
       'Связь с браслетом потеряна'
     );
 
-    if (this.onDiagnostic) {
-      this.onDiagnostic({
-        timestamp: new Date().toLocaleTimeString(),
-        rawPacket: '—',
-        parsedJson: null,
-        validation: { isValid: false, reason: 'Соединение BLE разорвано' },
-        uiData: { bpm: null, spo2: null, status: 'disconnected' },
-        packetCount: 0
-      });
-    }
-
     console.warn(
       '[QAMQOR BLE] Disconnected'
     );
@@ -383,16 +370,6 @@ export class BLEService {
 
       if (parsedObjects.length === 0) {
         // Ожидание завершения передачи MTU-фрагмента
-        if (this.onDiagnostic) {
-          this.onDiagnostic({
-            timestamp: new Date().toLocaleTimeString(),
-            rawPacket: cleanChunk,
-            parsedJson: null,
-            validation: { isValid: false, reason: 'Буферизация фрагмента BLE (ожидание закрытия JSON)...' },
-            uiData: { bpm: null, spo2: null, status: 'buffering' },
-            packetCount: this.packetCount
-          });
-        }
         return;
       }
 
@@ -422,17 +399,6 @@ export class BLEService {
         const devStatus = json.status || 'connected_no_data';
         this.emitEmptyTelemetry(devStatus);
         this.updateStatus('connected_no_data', this.getStatusText(devStatus));
-
-        if (this.onDiagnostic) {
-          this.onDiagnostic({
-            timestamp: new Date().toLocaleTimeString(),
-            rawPacket: rawText,
-            parsedJson: json,
-            validation: { isValid: false, bpm, spo2, reason: `Статус: ${devStatus} (палец не приложен или расчет)` },
-            uiData: { bpm: null, spo2: null, status: 'connected_no_data' },
-            packetCount: this.packetCount
-          });
-        }
         return;
       }
 
@@ -462,18 +428,6 @@ export class BLEService {
 
         this.emitEmptyTelemetry('invalid');
         this.updateStatus('connected_no_data', this.getStatusText('invalid'));
-
-        if (this.onDiagnostic) {
-          this.onDiagnostic({
-            timestamp: new Date().toLocaleTimeString(),
-            rawPacket: rawText,
-            parsedJson: json,
-            validation: { isValid: false, bpm, spo2, reason: `Отклонено: пульс ${bpm} или SpO2 ${spo2}% вне диапазона [40-200 / 70-100]` },
-            uiData: { bpm: null, spo2: null, status: 'connected_no_data' },
-            packetCount: this.packetCount
-          });
-        }
-
         return;
       }
 
@@ -538,17 +492,6 @@ export class BLEService {
       if (this.onTelemetry) {
 
         this.onTelemetry(telemetry);
-      }
-
-      if (this.onDiagnostic) {
-        this.onDiagnostic({
-          timestamp: new Date().toLocaleTimeString(),
-          rawPacket: rawText,
-          parsedJson: json,
-          validation: { isValid: true, bpm: telemetry.bpm, spo2: telemetry.spo2, reason: '✅ Физиологическая норма подтверждена' },
-          uiData: { bpm: telemetry.bpm, spo2: telemetry.spo2, status: 'connected_receiving' },
-          packetCount: this.packetCount
-        });
       }
 
       console.log(

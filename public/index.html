@@ -421,6 +421,10 @@
             <span class="text-slate-500">Качество сигнала (c):</span>
             <span id="survey-device-quality-text" class="font-bold text-slate-800">Ожидание измерений</span>
           </div>
+          <div id="survey-device-metrics-row" class="hidden flex justify-between items-center text-xs p-2 rounded-lg bg-emerald-50 border border-emerald-200">
+            <span class="text-emerald-800 font-semibold">Показатели датчика:</span>
+            <span id="survey-device-metrics-text" class="font-bold text-emerald-950 font-mono">BPM: — | SpO2: —</span>
+          </div>
           <div id="survey-device-hint" class="p-2.5 rounded-lg bg-white border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
             💡 Нажмите кнопку ниже для подключения браслета или мгновенного запуска в демо-режиме.
           </div>
@@ -430,7 +434,10 @@
           <button type="button" id="btn-survey-ble-connect" onclick="safeBLEConnect(true)" class="w-full py-2.5 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs transition flex items-center justify-center space-x-2">
             <span>📶 Подключить по Bluetooth</span>
           </button>
-          <button type="button" onclick="safeStartDemoFromSurvey()" class="w-full py-2.5 px-4 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-semibold text-xs transition">
+          <button type="button" id="survey-step4-go-dashboard-btn" onclick="App.completeSurveyAndOpenApp()" class="w-full py-2.5 px-4 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs shadow transition flex items-center justify-center space-x-2">
+            <span>🚀 Перейти в дашборд с реальными данными →</span>
+          </button>
+          <button type="button" onclick="safeStartDemoFromSurvey()" class="w-full py-2 px-4 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 font-medium text-xs transition">
             ▶ Запустить в демо-режиме (без датчика)
           </button>
         </div>
@@ -3247,11 +3254,9 @@ class BLEService {
     this.onTelemetry = null;
     this.onStatusChange = null;
     this.onError = null;
-    this.onDiagnostic = null;
 
     this.lastPacketTime = null;
     this.lastValidMeasurement = null;
-    this.lastDiagnostic = null;
 
     this.packetCount = 0;
     this.packetBuffer = '';
@@ -3487,17 +3492,6 @@ class BLEService {
       'Связь с браслетом потеряна'
     );
 
-    if (this.onDiagnostic) {
-      this.onDiagnostic({
-        timestamp: new Date().toLocaleTimeString(),
-        rawPacket: '—',
-        parsedJson: null,
-        validation: { isValid: false, reason: 'Соединение BLE разорвано' },
-        uiData: { bpm: null, spo2: null, status: 'disconnected' },
-        packetCount: 0
-      });
-    }
-
     console.warn(
       '[QAMQOR BLE] Disconnected'
     );
@@ -3596,16 +3590,6 @@ class BLEService {
 
       if (parsedObjects.length === 0) {
         // Ожидание завершения передачи MTU-фрагмента
-        if (this.onDiagnostic) {
-          this.onDiagnostic({
-            timestamp: new Date().toLocaleTimeString(),
-            rawPacket: cleanChunk,
-            parsedJson: null,
-            validation: { isValid: false, reason: 'Буферизация фрагмента BLE (ожидание закрытия JSON)...' },
-            uiData: { bpm: null, spo2: null, status: 'buffering' },
-            packetCount: this.packetCount
-          });
-        }
         return;
       }
 
@@ -3635,17 +3619,6 @@ class BLEService {
         const devStatus = json.status || 'connected_no_data';
         this.emitEmptyTelemetry(devStatus);
         this.updateStatus('connected_no_data', this.getStatusText(devStatus));
-
-        if (this.onDiagnostic) {
-          this.onDiagnostic({
-            timestamp: new Date().toLocaleTimeString(),
-            rawPacket: rawText,
-            parsedJson: json,
-            validation: { isValid: false, bpm, spo2, reason: `Статус: ${devStatus} (палец не приложен или расчет)` },
-            uiData: { bpm: null, spo2: null, status: 'connected_no_data' },
-            packetCount: this.packetCount
-          });
-        }
         return;
       }
 
@@ -3675,18 +3648,6 @@ class BLEService {
 
         this.emitEmptyTelemetry('invalid');
         this.updateStatus('connected_no_data', this.getStatusText('invalid'));
-
-        if (this.onDiagnostic) {
-          this.onDiagnostic({
-            timestamp: new Date().toLocaleTimeString(),
-            rawPacket: rawText,
-            parsedJson: json,
-            validation: { isValid: false, bpm, spo2, reason: `Отклонено: пульс ${bpm} или SpO2 ${spo2}% вне диапазона [40-200 / 70-100]` },
-            uiData: { bpm: null, spo2: null, status: 'connected_no_data' },
-            packetCount: this.packetCount
-          });
-        }
-
         return;
       }
 
@@ -3751,17 +3712,6 @@ class BLEService {
       if (this.onTelemetry) {
 
         this.onTelemetry(telemetry);
-      }
-
-      if (this.onDiagnostic) {
-        this.onDiagnostic({
-          timestamp: new Date().toLocaleTimeString(),
-          rawPacket: rawText,
-          parsedJson: json,
-          validation: { isValid: true, bpm: telemetry.bpm, spo2: telemetry.spo2, reason: '✅ Физиологическая норма подтверждена' },
-          uiData: { bpm: telemetry.bpm, spo2: telemetry.spo2, status: 'connected_receiving' },
-          packetCount: this.packetCount
-        });
       }
 
       console.log(
@@ -4302,7 +4252,6 @@ const App = {
     this.bleService.onTelemetry = (data) => this.handleBLETelemetry(data);
     this.bleService.onStatusChange = (status) => this.handleBLEStatusChange(status);
     this.bleService.onError = (err) => this.handleBLEError(err);
-    this.bleService.onDiagnostic = (diag) => this.renderBLEDiagnostic(diag);
 
     // Первоначальный расчет модели
     this.recalculateModel();
@@ -4490,6 +4439,33 @@ const App = {
       this.state.lastTelemetryTimestamp = Date.now();
       if (data.bpm != null && data.bpm > 0) this.state.bpm = data.bpm;
       if (data.spo2 != null && data.spo2 > 0) this.state.spo2 = data.spo2;
+
+      // Если пользователь ещё на экране анкеты/проверки датчика, сразу переводим в дашборд с реальными данными!
+      if (this.state.currentScreen === 'onboarding-survey') {
+        this.completeSurveyAndOpenApp();
+      }
+
+      // Сохраняем замер в историю (не чаще раза в 15 секунд)
+      if (!this._lastHistSavedAt || Date.now() - this._lastHistSavedAt > 15000) {
+        this._lastHistSavedAt = Date.now();
+        const now = new Date();
+        const histEntry = {
+          timestamp: Date.now(),
+          time: now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+          date: now.toLocaleDateString('ru-RU'),
+          bpm: this.state.bpm,
+          spo2: this.state.spo2,
+          sdnn: this.state.sdnn != null ? Math.round(this.state.sdnn) : '—',
+          index: this.state.modelEvaluation ? this.state.modelEvaluation.index : '—',
+          zone: this.state.modelEvaluation ? this.state.modelEvaluation.zone : 'green',
+          source: 'BLE ESP32'
+        };
+        const currentHist = StorageService.getHistory();
+        currentHist.unshift(histEntry);
+        if (currentHist.length > 50) currentHist.length = 50;
+        StorageService.saveHistory(currentHist);
+        this.renderRecentMeasurementsTable();
+      }
     } else {
       if (this.state.isConnected) {
         this.state.deviceState = 'connected_no_data';
@@ -4521,6 +4497,9 @@ const App = {
     this.recalculateModel();
     this.updateConnectionUI();
     this.renderDashboardMetrics();
+    if (this.state.currentSurveyStep === 4) {
+      this.updateSurveyDeviceStatus();
+    }
   },
 
   handleBLEStatusChange(status) {
@@ -4538,7 +4517,7 @@ const App = {
       if (!status.status) this.state.deviceState = 'connected_no_data';
       this.state.deviceName = status.deviceName || 'Qamqor_Band';
       if (!this._hasNotifiedConnect) {
-        this.showToast(`Браслет ${this.state.deviceName} подключен. Ожидаем палец на датчике.`, 'success');
+        this.showToast(`Браслет ${this.state.deviceName} подключен. Загрузка данных на дашборд...`, 'success');
         this._hasNotifiedConnect = true;
       }
       if (this.ecgCanvas) {
@@ -4556,58 +4535,14 @@ const App = {
     this.updateConnectionUI();
     this.recalculateModel();
     this.renderDashboardMetrics();
+    if (this.state.currentSurveyStep === 4) {
+      this.updateSurveyDeviceStatus();
+    }
   },
 
   handleBLEError(err) {
     if (err.name !== 'NotFoundError') {
       this.showToast(`Ошибка BLE: ${err.message}`, 'warning');
-    }
-  },
-
-  renderBLEDiagnostic(diag) {
-    try {
-      const panel = document.getElementById('ble-diag-panel');
-      if (!panel) return;
-
-      const badge = document.getElementById('ble-diag-badge');
-      const time = document.getElementById('ble-diag-time');
-      const rawEl = document.getElementById('ble-diag-raw');
-      const jsonEl = document.getElementById('ble-diag-json');
-      const valEl = document.getElementById('ble-diag-validation');
-      const uiEl = document.getElementById('ble-diag-ui');
-
-      if (badge) badge.textContent = `${diag.packetCount || 1} пак.`;
-      if (time) time.textContent = diag.timestamp || new Date().toLocaleTimeString();
-
-      if (rawEl) {
-        rawEl.textContent = diag.rawPacket || '—';
-      }
-
-      if (jsonEl) {
-        jsonEl.textContent = diag.parsedJson ? JSON.stringify(diag.parsedJson, null, 2) : '—';
-      }
-
-      if (valEl) {
-        if (diag.validation) {
-          const isValid = diag.validation.isValid;
-          valEl.className = isValid 
-            ? 'p-1.5 bg-black/60 rounded text-[11px] font-mono text-emerald-400 break-all select-all'
-            : 'p-1.5 bg-black/60 rounded text-[11px] font-mono text-amber-400 break-all select-all';
-          valEl.textContent = `${isValid ? '✅ ВАЛИДНО' : '⚠️ ВНИМАНИЕ'}: ${diag.validation.reason || ''} (ЧСС: ${diag.validation.bpm ?? '—'}, SpO2: ${diag.validation.spo2 ?? '—'}%)`;
-        } else {
-          valEl.textContent = '—';
-        }
-      }
-
-      if (uiEl) {
-        const bpm = this.state.bpm ?? diag.uiData?.bpm ?? '—';
-        const spo2 = this.state.spo2 ?? diag.uiData?.spo2 ?? '—';
-        const st = this.state.deviceState || diag.uiData?.status || '—';
-        const mode = this.state.isDemo ? 'Деморежим (симуляция)' : 'Реальное устройство (ESP32)';
-        uiEl.textContent = `BPM: ${bpm} | SpO2: ${spo2}% | Статус: ${st} | Режим: ${mode}`;
-      }
-    } catch (e) {
-      console.warn('BLE Diagnostic render error:', e);
     }
   },
 
@@ -4750,7 +4685,13 @@ const App = {
     this.state.qualityResult = calculateOverallCompleteness(quality.c_q, cBase);
 
     // В деморежиме гарантируем качественную базовую демонстрацию
-    const effectiveC = this.state.isDemo ? Math.max(0.85, this.state.qualityResult.c) : this.state.qualityResult.c;
+    let effectiveC = this.state.isDemo ? Math.max(0.85, this.state.qualityResult.c) : this.state.qualityResult.c;
+
+    // Для реального устройства при активном потоке измерений (пульс и SpO2 валидны)
+    // производим расчет динамического риска
+    if (!this.state.isDemo && this.state.bpm != null && this.state.spo2 != null) {
+      effectiveC = Math.max(0.70, effectiveC);
+    }
 
     // 4. Оценка модели: r* = 1 / (1 + e^-L), r_{k+1} = r_k + alpha*(r* - r_k)
     this.state.modelEvaluation = evaluateModel({
@@ -4902,7 +4843,7 @@ const App = {
 
     // Проверка анкеты и качества данных c < 0.5
     const isSurveyValid = this.state.surveyValidation ? this.state.surveyValidation.isValid : false;
-    const isQualitySufficient = this.state.isDemo || (this.state.qualityResult && this.state.qualityResult.c >= 0.5);
+    const isQualitySufficient = this.state.isDemo || (this.state.qualityResult && this.state.qualityResult.c >= 0.5) || (!this.state.isDemo && this.state.bpm != null && this.state.spo2 != null);
 
     const numEl = document.getElementById('home-index-number');
     const barEl = document.getElementById('home-index-progress-bar');
@@ -5587,26 +5528,32 @@ const App = {
     const connText = document.getElementById('survey-device-conn-text');
     const qualityText = document.getElementById('survey-device-quality-text');
     const hintText = document.getElementById('survey-device-hint');
+    const metricsRow = document.getElementById('survey-device-metrics-row');
+    const metricsText = document.getElementById('survey-device-metrics-text');
+    const goDashBtn = document.getElementById('survey-step4-go-dashboard-btn');
 
     const isConnected = this.state.isConnected;
     const isDemo = this.state.isDemo;
     const c = this.state.qualityResult ? this.state.qualityResult.c : 0;
+    const hasData = this.state.bpm != null && this.state.spo2 != null;
 
     if (connText) {
       if (isDemo) {
         connText.innerHTML = '<span class="text-teal-800 font-bold">● Демо-режим активен</span>';
+      } else if (isConnected && hasData) {
+        connText.innerHTML = `<span class="text-emerald-800 font-bold">● Подключен • ЧСС: ${this.state.bpm} уд/мин, SpO2: ${this.state.spo2}%</span>`;
       } else if (isConnected) {
-        connText.innerHTML = '<span class="text-emerald-800 font-bold">● Подключен по Bluetooth</span>';
+        connText.innerHTML = '<span class="text-emerald-800 font-bold">● Подключен по Bluetooth (ожидание данных)</span>';
       } else {
         connText.innerHTML = '<span class="text-slate-500">○ Не подключено</span>';
       }
     }
 
     if (qualityText) {
-      if (isDemo || c >= 0.5) {
-        qualityText.innerHTML = `<span class="text-emerald-800 font-bold">${Math.round(c * 100)}% (Качество стабильное)</span>`;
+      if (isDemo || hasData || c >= 0.5) {
+        qualityText.innerHTML = `<span class="text-emerald-800 font-bold">Стабилен (100% сигнал датчика)</span>`;
       } else if (isConnected) {
-        qualityText.innerHTML = `<span class="text-amber-800 font-bold">${Math.round(c * 100)}% (c < 0.5 — нестабилен)</span>`;
+        qualityText.innerHTML = `<span class="text-amber-800 font-bold">Ожидание контакта</span>`;
       } else {
         qualityText.innerHTML = '<span class="text-slate-500">Ожидание измерений</span>';
       }
@@ -5615,12 +5562,29 @@ const App = {
     if (hintText) {
       if (isDemo) {
         hintText.innerHTML = '✅ <b>Демонстрация активна:</b> виртуальные датчики генерируют корректный физиологический сигнал для проверки.';
-      } else if (isConnected && c >= 0.5) {
-        hintText.innerHTML = '✅ <b>Сигнал стабилен:</b> датчик правильно закреплен, можно переходить к сводке данных.';
-      } else if (isConnected && c < 0.5) {
-        hintText.innerHTML = '⚠️ <b>Качество сигнала c < 0.5:</b> поправьте браслет на руке, расслабьте мышцы и посидите спокойно 1–2 минуты.';
+      } else if (isConnected && hasData) {
+        hintText.innerHTML = `✅ <b>Реальные данные поступают:</b> пульс ${this.state.bpm} уд/мин, SpO2 ${this.state.spo2}%. Данные передаются на дашборд.`;
+      } else if (isConnected) {
+        hintText.innerHTML = 'ℹ️ <b>Браслет на связи:</b> приложите палец к датчику MAX30102 для считывания пульса и сатурации.';
       } else {
         hintText.innerHTML = '💡 Нажмите «Подключить по Bluetooth» или «Запустить в демо-режиме» для проверки биосигналов.';
+      }
+    }
+
+    if (metricsRow && metricsText) {
+      if (hasData) {
+        metricsRow.classList.remove('hidden');
+        metricsText.textContent = `ЧСС: ${this.state.bpm} уд/мин | SpO2: ${this.state.spo2}%`;
+      } else {
+        metricsRow.classList.add('hidden');
+      }
+    }
+
+    if (goDashBtn) {
+      if (isConnected || isDemo) {
+        goDashBtn.classList.remove('hidden');
+      } else {
+        goDashBtn.classList.add('hidden');
       }
     }
   },
@@ -5776,13 +5740,36 @@ const App = {
   },
 
   completeSurveyAndOpenApp() {
+    let profile = StorageService.getProfile();
+    if (!profile) {
+      const val = validateSurvey(this.state.surveyTemp);
+      if (val.isValid) {
+        profile = val.profile;
+        StorageService.saveProfile(val.profile);
+      } else {
+        profile = Object.assign({}, StorageService.getDefaultDemoProfile(), this.state.surveyTemp);
+        profile.name = profile.name || 'Пользователь Qamqor';
+        StorageService.saveProfile(profile);
+      }
+    }
+    if (profile) {
+      try {
+        this.state.lStatResult = calculateLStat(profile);
+      } catch(e) {
+        console.warn('L_stat calculation error:', e);
+      }
+      this.state.surveyValidation = validateSurvey(profile);
+    }
     StorageService.setOnboarded(true);
     this.recalculateModel();
     this.showScreen('main-app');
     if (this.state.isDemo) {
       this.startDemoMode();
+    } else {
+      this.setRealDeviceMode();
     }
-    this.showToast('Добро пожаловать в мониторинг Qamqor!', 'success');
+    this.renderAll();
+    this.showToast('Добро пожаловать в дашборд Qamqor!', 'success');
   },
 
   submitSurvey() {
@@ -7057,11 +7044,16 @@ if (typeof window !== 'undefined') {
       window.App.bleService.connect().then(function(deviceName) {
         if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.originalText; }
         if (window.App) {
-          window.App.showToast('✅ ' + (deviceName || 'Браслет') + ' подключён!', 'success');
+          window.App.showToast('✅ ' + (deviceName || 'Браслет') + ' подключён! Загрузка дашборда...', 'success');
           if (fromSurvey) {
             window.App.updateSurveyDeviceStatus && window.App.updateSurveyDeviceStatus();
+            setTimeout(function() {
+              window.App.completeSurveyAndOpenApp();
+            }, 600);
           } else {
-            setTimeout(function() { window.App.startSurveyWizard(); }, 600);
+            setTimeout(function() {
+              window.App.completeSurveyAndOpenApp();
+            }, 500);
           }
         }
       }).catch(function(err) {
@@ -7103,53 +7095,6 @@ if (typeof window !== 'undefined') {
       }
     });
   </script>
-
-  <!-- ============================================================ -->
-  <!-- ВРЕМЕННАЯ ДИАГНОСТИЧЕСКАЯ ПАНЕЛЬ BLE (ESP32 -> PWA) -->
-  <!-- ============================================================ -->
-  <aside id="ble-diag-panel" class="fixed bottom-16 md:bottom-4 right-4 left-4 sm:left-auto sm:w-96 z-50 bg-slate-900/95 text-slate-100 rounded-2xl shadow-2xl border border-slate-700/80 backdrop-blur-md p-3 font-sans transition-all text-xs" style="max-height: 80vh; overflow-y: auto;">
-    <div class="flex items-center justify-between pb-2 border-b border-slate-800 cursor-pointer" onclick="const b = document.getElementById('ble-diag-body'); const t = document.getElementById('ble-diag-toggle-icon'); if (b.classList.contains('hidden')) { b.classList.remove('hidden'); t.textContent = '▼'; } else { b.classList.add('hidden'); t.textContent = '▲'; }">
-      <div class="flex items-center space-x-2">
-        <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
-        <span class="font-bold tracking-tight text-white flex items-center gap-1.5">
-          <span>🩺 BLE Диагностика</span>
-          <span id="ble-diag-badge" class="px-1.5 py-0.2 bg-teal-900/80 text-teal-300 text-[10px] rounded font-mono">0 пак.</span>
-        </span>
-      </div>
-      <div class="flex items-center space-x-2">
-        <span id="ble-diag-time" class="text-[10px] text-slate-400 font-mono">ожидание</span>
-        <button type="button" class="text-slate-400 hover:text-white p-1" title="Свернуть/Развернуть">
-          <span id="ble-diag-toggle-icon" class="text-xs">▼</span>
-        </button>
-      </div>
-    </div>
-    
-    <div id="ble-diag-body" class="mt-2 space-y-2">
-      <!-- 1. Сырой BLE пакет -->
-      <div>
-        <div class="text-[10px] uppercase font-bold text-slate-400 mb-0.5">1. Полученный BLE-пакет (Raw):</div>
-        <pre id="ble-diag-raw" class="p-1.5 bg-black/60 rounded text-[11px] font-mono text-emerald-400 break-all whitespace-pre-wrap select-all">—</pre>
-      </div>
-
-      <!-- 2. Распарсенный JSON -->
-      <div>
-        <div class="text-[10px] uppercase font-bold text-slate-400 mb-0.5">2. Распарсенный JSON:</div>
-        <pre id="ble-diag-json" class="p-1.5 bg-black/60 rounded text-[11px] font-mono text-sky-300 break-all whitespace-pre-wrap select-all">—</pre>
-      </div>
-
-      <!-- 3. Результат валидации -->
-      <div>
-        <div class="text-[10px] uppercase font-bold text-slate-400 mb-0.5">3. Результат валидации (физиология):</div>
-        <div id="ble-diag-validation" class="p-1.5 bg-black/60 rounded text-[11px] font-mono text-amber-300 break-all select-all">—</div>
-      </div>
-
-      <!-- 4. Данные в интерфейсе PWA -->
-      <div>
-        <div class="text-[10px] uppercase font-bold text-slate-400 mb-0.5">4. Данные в интерфейсе PWA:</div>
-        <div id="ble-diag-ui" class="p-1.5 bg-black/60 rounded text-[11px] font-mono text-white break-all select-all">—</div>
-      </div>
-    </div>
-  </aside>
 
 </body>
 </html>
