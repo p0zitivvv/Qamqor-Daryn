@@ -1888,9 +1888,14 @@ class BLEService {
     this.onTelemetry = null;
     this.onStatusChange = null;
     this.onError = null;
+    this.onDiagnostic = null;
 
     this.lastPacketTime = null;
     this.lastValidMeasurement = null;
+    this.lastDiagnostic = null;
+
+    this.packetCount = 0;
+    this.packetBuffer = '';
 
     this.connectionTimeout = null;
 
@@ -2113,6 +2118,8 @@ class BLEService {
     this.server = null;
 
     this.lastPacketTime = null;
+    this.packetBuffer = '';
+    this.packetCount = 0;
 
     this.emitEmptyTelemetry('disconnected');
 
@@ -2120,6 +2127,17 @@ class BLEService {
       'disconnected',
       'Связь с браслетом потеряна'
     );
+
+    if (this.onDiagnostic) {
+      this.onDiagnostic({
+        timestamp: new Date().toLocaleTimeString(),
+        rawPacket: '—',
+        parsedJson: null,
+        validation: { isValid: false, reason: 'Соединение BLE разорвано' },
+        uiData: { bpm: null, spo2: null, status: 'disconnected' },
+        packetCount: 0
+      });
+    }
 
     console.warn(
       '[QAMQOR BLE] Disconnected'
@@ -2135,93 +2153,140 @@ class BLEService {
     try {
 
       const dataView = event.target.value;
-
       const decoder = new TextDecoder('utf-8');
+      const rawChunk = decoder.decode(dataView);
 
-      const text = decoder.decode(dataView).trim();
-
-      if (!text) return;
+      if (!rawChunk) return;
 
       this.lastPacketTime = Date.now();
+      this.packetCount++;
+
+      // Очистка от \0 (null-байтов) и непечатных управляющих символов (кроме перевода строк)
+      const cleanChunk = rawChunk.replace(/\0/g, '').replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
+      this.packetBuffer += cleanChunk;
+
+      // Защита от переполнения буфера (храним хвост)
+      if (this.packetBuffer.length > 2048) {
+        this.packetBuffer = this.packetBuffer.slice(-512);
+      }
 
       console.log(
-        '[QAMQOR BLE] Received:',
-        text
+        '[QAMQOR BLE] Received chunk:',
+        cleanChunk
       );
 
-      let json;
+      // Извлечение JSON-объектов из потокового буфера
+      let parsedObjects = [];
+      let lastEndIndex = 0;
+      let braceDepth = 0;
+      let startIndex = -1;
 
-      try {
+      for (let i = 0; i < this.packetBuffer.length; i++) {
+        const ch = this.packetBuffer[i];
+        if (ch === '{') {
+          if (braceDepth === 0) startIndex = i;
+          braceDepth++;
+        } else if (ch === '}') {
+          braceDepth--;
+          if (braceDepth === 0 && startIndex !== -1) {
+            const candidate = this.packetBuffer.substring(startIndex, i + 1);
+            try {
+              const obj = JSON.parse(candidate);
+              parsedObjects.push({ obj, raw: candidate });
+              lastEndIndex = i + 1;
+            } catch (err) {
+              // Попытка спарсить через Regex, если JSON поврежден внутри
+              const hrM = candidate.match(/(?:heartRate|heart_rate|bpm|hr)\s*[:=]\s*(\d+)/i);
+              const spM = candidate.match(/(?:spo2|o2|oximeter)\s*[:=]\s*(\d+)/i);
+              if (hrM && spM) {
+                parsedObjects.push({
+                  obj: {
+                    status: 'receiving',
+                    heartRate: parseInt(hrM[1], 10),
+                    spo2: parseInt(spM[1], 10)
+                  },
+                  raw: candidate
+                });
+                lastEndIndex = i + 1;
+              }
+            }
+            startIndex = -1;
+          }
+        }
+      }
 
-        json = JSON.parse(text);
+      // Если полных фигурных скобок не найдено, но в буфере есть готовые числа ЧСС и SpO2
+      if (parsedObjects.length === 0) {
+        const hrM = this.packetBuffer.match(/(?:heartRate|heart_rate|bpm|hr)\s*[:=]\s*(\d+)/i);
+        const spM = this.packetBuffer.match(/(?:spo2|o2|oximeter)\s*[:=]\s*(\d+)/i);
+        if (hrM && spM) {
+          parsedObjects.push({
+            obj: {
+              status: 'receiving',
+              heartRate: parseInt(hrM[1], 10),
+              spo2: parseInt(spM[1], 10)
+            },
+            raw: this.packetBuffer.trim()
+          });
+          this.packetBuffer = '';
+        }
+      } else {
+        // Удаляем распознанные пакеты из буфера
+        this.packetBuffer = this.packetBuffer.substring(lastEndIndex);
+      }
 
-      } catch (error) {
-
-        console.warn(
-          '[QAMQOR BLE] Invalid JSON:',
-          text
-        );
-
+      if (parsedObjects.length === 0) {
+        // Ожидание завершения передачи MTU-фрагмента
+        if (this.onDiagnostic) {
+          this.onDiagnostic({
+            timestamp: new Date().toLocaleTimeString(),
+            rawPacket: cleanChunk,
+            parsedJson: null,
+            validation: { isValid: false, reason: 'Буферизация фрагмента BLE (ожидание закрытия JSON)...' },
+            uiData: { bpm: null, spo2: null, status: 'buffering' },
+            packetCount: this.packetCount
+          });
+        }
         return;
       }
+
+      // Берем самый последний актуальный пакет из очереди
+      const latest = parsedObjects[parsedObjects.length - 1];
+      const json = latest.obj;
+      const rawText = latest.raw;
+
+      console.log(
+        '[QAMQOR BLE] Parsed JSON:',
+        json
+      );
 
       // =====================================
       // DEVICE STATUS
       // =====================================
+      const rawStatus = String(json.status || 'receiving').toLowerCase();
+      const isExplicitNoData = ['calculating', 'no_finger', 'sensor_error', 'initializing'].includes(rawStatus);
 
-      const deviceStatus = json.status || 'receiving';
-
-      if (deviceStatus !== 'receiving') {
-
-        const statusMap = {
-
-          calculating: 'connected_no_data',
-
-          no_finger: 'connected_no_data',
-
-          sensor_error: 'connected_no_data',
-
-          initializing: 'connected_no_data'
-        };
-
-        const uiStatus =
-          statusMap[deviceStatus] ||
-          'connected_no_data';
-
-        this.emitEmptyTelemetry(deviceStatus);
-
-        this.updateStatus(
-          uiStatus,
-          this.getStatusText(deviceStatus)
-        );
-
-        return;
-      }
-
-      // =====================================
-      // PARSE REAL MEASUREMENTS
-      // =====================================
-
-      const bpm = Number(
-        json.heartRate ?? json.bpm
-      );
-
+      // Чтение биометрии: поддержка heartRate, bpm, spo2
+      const bpm = Number(json.heartRate ?? json.bpm);
       const spo2 = Number(json.spo2);
-
       const rawEcg = json.ecg != null ? Number(json.ecg) : null;
       const hasActiveECG = Number.isFinite(rawEcg) && rawEcg > 10 && rawEcg < 4085 && rawEcg !== 2048;
 
-      if (
-        !Number.isFinite(bpm) ||
-        !Number.isFinite(spo2)
-      ) {
+      if (isExplicitNoData || !Number.isFinite(bpm) || !Number.isFinite(spo2) || bpm <= 0 || spo2 <= 0) {
+        const devStatus = json.status || 'connected_no_data';
+        this.emitEmptyTelemetry(devStatus);
+        this.updateStatus('connected_no_data', this.getStatusText(devStatus));
 
-        console.warn(
-          '[QAMQOR BLE] Invalid measurement values'
-        );
-
-        this.emitEmptyTelemetry('invalid');
-
+        if (this.onDiagnostic) {
+          this.onDiagnostic({
+            timestamp: new Date().toLocaleTimeString(),
+            rawPacket: rawText,
+            parsedJson: json,
+            validation: { isValid: false, bpm, spo2, reason: `Статус: ${devStatus} (палец не приложен или расчет)` },
+            uiData: { bpm: null, spo2: null, status: 'connected_no_data' },
+            packetCount: this.packetCount
+          });
+        }
         return;
       }
 
@@ -2244,12 +2309,24 @@ class BLEService {
       if (!isValid) {
 
         console.warn(
-          '[QAMQOR BLE] Measurement rejected (no finger or invalid):',
+          '[QAMQOR BLE] Measurement rejected (outside limits):',
           bpm,
           spo2
         );
 
         this.emitEmptyTelemetry('invalid');
+        this.updateStatus('connected_no_data', this.getStatusText('invalid'));
+
+        if (this.onDiagnostic) {
+          this.onDiagnostic({
+            timestamp: new Date().toLocaleTimeString(),
+            rawPacket: rawText,
+            parsedJson: json,
+            validation: { isValid: false, bpm, spo2, reason: `Отклонено: пульс ${bpm} или SpO2 ${spo2}% вне диапазона [40-200 / 70-100]` },
+            uiData: { bpm: null, spo2: null, status: 'connected_no_data' },
+            packetCount: this.packetCount
+          });
+        }
 
         return;
       }
@@ -2315,6 +2392,17 @@ class BLEService {
       if (this.onTelemetry) {
 
         this.onTelemetry(telemetry);
+      }
+
+      if (this.onDiagnostic) {
+        this.onDiagnostic({
+          timestamp: new Date().toLocaleTimeString(),
+          rawPacket: rawText,
+          parsedJson: json,
+          validation: { isValid: true, bpm: telemetry.bpm, spo2: telemetry.spo2, reason: '✅ Физиологическая норма подтверждена' },
+          uiData: { bpm: telemetry.bpm, spo2: telemetry.spo2, status: 'connected_receiving' },
+          packetCount: this.packetCount
+        });
       }
 
       console.log(
@@ -2855,6 +2943,7 @@ const App = {
     this.bleService.onTelemetry = (data) => this.handleBLETelemetry(data);
     this.bleService.onStatusChange = (status) => this.handleBLEStatusChange(status);
     this.bleService.onError = (err) => this.handleBLEError(err);
+    this.bleService.onDiagnostic = (diag) => this.renderBLEDiagnostic(diag);
 
     // Первоначальный расчет модели
     this.recalculateModel();
@@ -3030,7 +3119,12 @@ const App = {
   // ОБРАБОТКА ПОСТУПЛЕНИЯ ДАННЫХ И СОСТОЯНИЙ BLE
   // ========================================================
   handleBLETelemetry(data) {
-    if (this.state.isDemo) return; // Игнорируем в демо-режиме
+    // При поступлении реальных данных принудительно отключаем демо-режим
+    if (this.state.isDemo) {
+      this.demoSimulator.stop();
+      this.state.isDemo = false;
+      StorageService.setDemoMode(false);
+    }
 
     if (data.hasValidSensors) {
       this.state.deviceState = 'connected_receiving';
@@ -3076,6 +3170,12 @@ const App = {
       this.state.deviceState = status.status;
     }
     if (status.connected) {
+      // При подключении реального устройства выходим из демо-режима
+      if (this.state.isDemo) {
+        this.demoSimulator.stop();
+        this.state.isDemo = false;
+        StorageService.setDemoMode(false);
+      }
       if (!status.status) this.state.deviceState = 'connected_no_data';
       this.state.deviceName = status.deviceName || 'Qamqor_Band';
       if (!this._hasNotifiedConnect) {
@@ -3102,6 +3202,53 @@ const App = {
   handleBLEError(err) {
     if (err.name !== 'NotFoundError') {
       this.showToast(`Ошибка BLE: ${err.message}`, 'warning');
+    }
+  },
+
+  renderBLEDiagnostic(diag) {
+    try {
+      const panel = document.getElementById('ble-diag-panel');
+      if (!panel) return;
+
+      const badge = document.getElementById('ble-diag-badge');
+      const time = document.getElementById('ble-diag-time');
+      const rawEl = document.getElementById('ble-diag-raw');
+      const jsonEl = document.getElementById('ble-diag-json');
+      const valEl = document.getElementById('ble-diag-validation');
+      const uiEl = document.getElementById('ble-diag-ui');
+
+      if (badge) badge.textContent = `${diag.packetCount || 1} пак.`;
+      if (time) time.textContent = diag.timestamp || new Date().toLocaleTimeString();
+
+      if (rawEl) {
+        rawEl.textContent = diag.rawPacket || '—';
+      }
+
+      if (jsonEl) {
+        jsonEl.textContent = diag.parsedJson ? JSON.stringify(diag.parsedJson, null, 2) : '—';
+      }
+
+      if (valEl) {
+        if (diag.validation) {
+          const isValid = diag.validation.isValid;
+          valEl.className = isValid 
+            ? 'p-1.5 bg-black/60 rounded text-[11px] font-mono text-emerald-400 break-all select-all'
+            : 'p-1.5 bg-black/60 rounded text-[11px] font-mono text-amber-400 break-all select-all';
+          valEl.textContent = `${isValid ? '✅ ВАЛИДНО' : '⚠️ ВНИМАНИЕ'}: ${diag.validation.reason || ''} (ЧСС: ${diag.validation.bpm ?? '—'}, SpO2: ${diag.validation.spo2 ?? '—'}%)`;
+        } else {
+          valEl.textContent = '—';
+        }
+      }
+
+      if (uiEl) {
+        const bpm = this.state.bpm ?? diag.uiData?.bpm ?? '—';
+        const spo2 = this.state.spo2 ?? diag.uiData?.spo2 ?? '—';
+        const st = this.state.deviceState || diag.uiData?.status || '—';
+        const mode = this.state.isDemo ? 'Деморежим (симуляция)' : 'Реальное устройство (ESP32)';
+        uiEl.textContent = `BPM: ${bpm} | SpO2: ${spo2}% | Статус: ${st} | Режим: ${mode}`;
+      }
+    } catch (e) {
+      console.warn('BLE Diagnostic render error:', e);
     }
   },
 

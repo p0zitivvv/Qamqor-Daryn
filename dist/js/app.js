@@ -112,6 +112,7 @@ export const App = {
     this.bleService.onTelemetry = (data) => this.handleBLETelemetry(data);
     this.bleService.onStatusChange = (status) => this.handleBLEStatusChange(status);
     this.bleService.onError = (err) => this.handleBLEError(err);
+    this.bleService.onDiagnostic = (diag) => this.renderBLEDiagnostic(diag);
 
     // Первоначальный расчет модели
     this.recalculateModel();
@@ -287,7 +288,12 @@ export const App = {
   // ОБРАБОТКА ПОСТУПЛЕНИЯ ДАННЫХ И СОСТОЯНИЙ BLE
   // ========================================================
   handleBLETelemetry(data) {
-    if (this.state.isDemo) return; // Игнорируем в демо-режиме
+    // При поступлении реальных данных принудительно отключаем демо-режим
+    if (this.state.isDemo) {
+      this.demoSimulator.stop();
+      this.state.isDemo = false;
+      StorageService.setDemoMode(false);
+    }
 
     if (data.hasValidSensors) {
       this.state.deviceState = 'connected_receiving';
@@ -333,6 +339,12 @@ export const App = {
       this.state.deviceState = status.status;
     }
     if (status.connected) {
+      // При подключении реального устройства выходим из демо-режима
+      if (this.state.isDemo) {
+        this.demoSimulator.stop();
+        this.state.isDemo = false;
+        StorageService.setDemoMode(false);
+      }
       if (!status.status) this.state.deviceState = 'connected_no_data';
       this.state.deviceName = status.deviceName || 'Qamqor_Band';
       if (!this._hasNotifiedConnect) {
@@ -359,6 +371,53 @@ export const App = {
   handleBLEError(err) {
     if (err.name !== 'NotFoundError') {
       this.showToast(`Ошибка BLE: ${err.message}`, 'warning');
+    }
+  },
+
+  renderBLEDiagnostic(diag) {
+    try {
+      const panel = document.getElementById('ble-diag-panel');
+      if (!panel) return;
+
+      const badge = document.getElementById('ble-diag-badge');
+      const time = document.getElementById('ble-diag-time');
+      const rawEl = document.getElementById('ble-diag-raw');
+      const jsonEl = document.getElementById('ble-diag-json');
+      const valEl = document.getElementById('ble-diag-validation');
+      const uiEl = document.getElementById('ble-diag-ui');
+
+      if (badge) badge.textContent = `${diag.packetCount || 1} пак.`;
+      if (time) time.textContent = diag.timestamp || new Date().toLocaleTimeString();
+
+      if (rawEl) {
+        rawEl.textContent = diag.rawPacket || '—';
+      }
+
+      if (jsonEl) {
+        jsonEl.textContent = diag.parsedJson ? JSON.stringify(diag.parsedJson, null, 2) : '—';
+      }
+
+      if (valEl) {
+        if (diag.validation) {
+          const isValid = diag.validation.isValid;
+          valEl.className = isValid 
+            ? 'p-1.5 bg-black/60 rounded text-[11px] font-mono text-emerald-400 break-all select-all'
+            : 'p-1.5 bg-black/60 rounded text-[11px] font-mono text-amber-400 break-all select-all';
+          valEl.textContent = `${isValid ? '✅ ВАЛИДНО' : '⚠️ ВНИМАНИЕ'}: ${diag.validation.reason || ''} (ЧСС: ${diag.validation.bpm ?? '—'}, SpO2: ${diag.validation.spo2 ?? '—'}%)`;
+        } else {
+          valEl.textContent = '—';
+        }
+      }
+
+      if (uiEl) {
+        const bpm = this.state.bpm ?? diag.uiData?.bpm ?? '—';
+        const spo2 = this.state.spo2 ?? diag.uiData?.spo2 ?? '—';
+        const st = this.state.deviceState || diag.uiData?.status || '—';
+        const mode = this.state.isDemo ? 'Деморежим (симуляция)' : 'Реальное устройство (ESP32)';
+        uiEl.textContent = `BPM: ${bpm} | SpO2: ${spo2}% | Статус: ${st} | Режим: ${mode}`;
+      }
+    } catch (e) {
+      console.warn('BLE Diagnostic render error:', e);
     }
   },
 
