@@ -26,6 +26,12 @@ export class BLEService {
     this.characteristic = null;
 
     this.isConnected = false;
+    this.userRequestedDisconnect = false;
+    this.isReconnecting = false;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.reconnectTimer = null;
+    this.connectionStartTime = null;
 
     this.deviceName = 'Qamqor_Band';
 
@@ -41,8 +47,6 @@ export class BLEService {
     this.packetCount = 0;
     this.packetBuffer = '';
 
-    this.connectionTimeout = null;
-
     this.status = 'disconnected';
 
     this.handleCharacteristicChange =
@@ -50,6 +54,10 @@ export class BLEService {
 
     this.handleDisconnectEvent =
       this.handleDisconnected.bind(this);
+
+    if (typeof window !== 'undefined') {
+      window.__qamqor_ble_service = this;
+    }
   }
 
   // =========================================
@@ -65,9 +73,10 @@ export class BLEService {
 
   isSecureContext() {
     return (
-      window.isSecureContext ||
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1'
+      typeof window !== 'undefined' &&
+      (window.isSecureContext ||
+       window.location.hostname === 'localhost' ||
+       window.location.hostname === '127.0.0.1')
     );
   }
 
@@ -137,19 +146,24 @@ export class BLEService {
 
   async connect() {
 
-    if (!this.isSupported()) {
-
-      throw new Error(
-        'Браузер не поддерживает Web Bluetooth API.'
-      );
-    }
-
     if (!this.isSecureContext()) {
-
-      throw new Error(
-        'Web Bluetooth требует HTTPS или localhost.'
-      );
+      const err = new Error('Для работы Web Bluetooth требуется безопасное HTTPS-соединение или localhost.');
+      console.error('[QAMQOR BLE]', err.message);
+      throw err;
     }
+
+    if (!this.isSupported()) {
+      const isIOS = typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent || '');
+      const err = isIOS
+        ? new Error('Safari на iPhone не поддерживает Web Bluetooth API. Откройте приложение через браузер Bluefy из App Store.')
+        : new Error('Ваш браузер не поддерживает Web Bluetooth API. Используйте Google Chrome или Microsoft Edge.');
+      console.error('[QAMQOR BLE]', err.message);
+      throw err;
+    }
+
+    this.userRequestedDisconnect = false;
+    this.clearReconnectTimer();
+    this.reconnectAttempts = 0;
 
     try {
 
@@ -157,6 +171,8 @@ export class BLEService {
         serviceUuid,
         characteristicUuid
       } = MODEL_CONFIG.ble;
+
+      console.log(`[QAMQOR BLE] [${new Date().toLocaleTimeString('ru-RU')}] Запрос устройства Web Bluetooth...`);
 
       const device = await navigator.bluetooth.requestDevice({
 
@@ -172,16 +188,19 @@ export class BLEService {
       });
 
       this.device = device;
+      this.deviceName = device.name || 'Qamqor_Band';
 
-      this.deviceName =
-        device.name || 'Qamqor_Band';
-
+      // Снимаем старый слушатель перед добавлением
+      this.device.removeEventListener(
+        'gattserverdisconnected',
+        this.handleDisconnectEvent
+      );
       this.device.addEventListener(
         'gattserverdisconnected',
         this.handleDisconnectEvent
       );
 
-      console.log('[QAMQOR BLE] Connecting...');
+      console.log(`[QAMQOR BLE] [${new Date().toLocaleTimeString('ru-RU')}] Подключение к GATT серверу ${this.deviceName}...`);
 
       this.server = await device.gatt.connect();
 
@@ -193,13 +212,26 @@ export class BLEService {
 
       await this.characteristic.startNotifications();
 
+      // Снимаем старый слушатель перед добавлением
+      this.characteristic.removeEventListener(
+        'characteristicvaluechanged',
+        this.handleCharacteristicChange
+      );
       this.characteristic.addEventListener(
         'characteristicvaluechanged',
         this.handleCharacteristicChange
       );
 
-      this.isConnected = true;
+      // Глобальная привязка к window для предотвращения GC
+      if (typeof window !== 'undefined') {
+        window.__qamqor_ble_device = this.device;
+        window.__qamqor_ble_server = this.server;
+        window.__qamqor_ble_char = this.characteristic;
+      }
 
+      this.isConnected = true;
+      this.isReconnecting = false;
+      this.connectionStartTime = Date.now();
       this.lastPacketTime = Date.now();
 
       this.emitEmptyTelemetry('connected_no_data');
@@ -210,7 +242,7 @@ export class BLEService {
       );
 
       console.log(
-        '[QAMQOR BLE] Connected:',
+        `[QAMQOR BLE] [${new Date().toLocaleTimeString('ru-RU')}] Подключено успешно:`,
         this.deviceName
       );
 
@@ -239,41 +271,185 @@ export class BLEService {
   }
 
   // =========================================
-  // DISCONNECT
+  // DISCONNECT & RECONNECT MANAGEMENT
   // =========================================
 
   disconnect() {
 
-    if (this.device && this.device.gatt.connected) {
+    this.userRequestedDisconnect = true;
+    this.clearReconnectTimer();
+    this.reconnectAttempts = 0;
 
-      this.device.gatt.disconnect();
+    const durSec = this.connectionStartTime ? Math.round((Date.now() - this.connectionStartTime) / 1000) : 0;
+    console.log(`[QAMQOR BLE] [${new Date().toLocaleTimeString('ru-RU')}] Пользователь нажал «Отключить». Длительность сессии: ${durSec} сек.`);
 
+    if (this.characteristic) {
+      try {
+        this.characteristic.removeEventListener('characteristicvaluechanged', this.handleCharacteristicChange);
+      } catch (e) {}
+    }
+
+    if (this.device && this.device.gatt && this.device.gatt.connected) {
+      try {
+        this.device.gatt.disconnect();
+      } catch (e) {
+        console.warn('[QAMQOR BLE] Ошибка при вызове gatt.disconnect():', e);
+        this.handleDisconnected();
+      }
     } else {
-
       this.handleDisconnected();
     }
   }
 
-  handleDisconnected() {
+  handleDisconnected(event) {
+
+    const isUserAction = this.userRequestedDisconnect;
+    const durSec = this.connectionStartTime ? Math.round((Date.now() - this.connectionStartTime) / 1000) : 0;
+    const timeStr = new Date().toLocaleTimeString('ru-RU');
+
+    console.warn(`[QAMQOR BLE] [${timeStr}] Событие gattserverdisconnected. Причина: ${isUserAction ? 'Пользовательское отключение' : 'Неожиданный разрыв BLE соединения'}. Сессия длилась: ${durSec} сек.`);
 
     this.isConnected = false;
-
-    this.characteristic = null;
     this.server = null;
-
+    this.characteristic = null;
+    this.connectionStartTime = null;
     this.lastPacketTime = null;
     this.packetBuffer = '';
     this.packetCount = 0;
 
     this.emitEmptyTelemetry('disconnected');
 
+    if (isUserAction) {
+      this.userRequestedDisconnect = false;
+      this.clearReconnectTimer();
+      this.reconnectAttempts = 0;
+      this.updateStatus(
+        'disconnected',
+        'Связь с браслетом отключена'
+      );
+      return;
+    }
+
+    // Неожиданный разрыв связи: запускаем автопереподключение к this.device
     this.updateStatus(
-      'disconnected',
-      'Связь с браслетом потеряна'
+      'reconnecting',
+      'Соединение потеряно, переподключаюсь...'
+    );
+    this.attemptAutoReconnect();
+  }
+
+  attemptAutoReconnect() {
+
+    if (this.userRequestedDisconnect || !this.device) {
+      return;
+    }
+
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error(`[QAMQOR BLE] [${new Date().toLocaleTimeString('ru-RU')}] Исчерпаны все ${this.maxReconnectAttempts} попыток переподключения.`);
+      this.reconnectAttempts = 0;
+      this.isReconnecting = false;
+      this.updateStatus(
+        'disconnected',
+        'Связь потеряна. Нажмите «Подключить», чтобы восстановить связь.'
+      );
+      if (this.onError) {
+        this.onError(new Error('Связь с браслетом потеряна (5 попыток переподключения завершились неудачно)'));
+      }
+      return;
+    }
+
+    this.reconnectAttempts++;
+    this.isReconnecting = true;
+
+    // Экспоненциальная задержка: 1.5s, 3s, 6s, 12s, 24s
+    const delayMs = Math.min(24000, Math.round(1500 * Math.pow(2, this.reconnectAttempts - 1)));
+    console.warn(`[QAMQOR BLE] Попытка переподключения ${this.reconnectAttempts} из ${this.maxReconnectAttempts} через ${delayMs / 1000} сек...`);
+    this.updateStatus(
+      'reconnecting',
+      `Соединение потеряно, переподключаюсь (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`
     );
 
-    console.warn(
-      '[QAMQOR BLE] Disconnected'
+    this.clearReconnectTimer();
+    this.reconnectTimer = setTimeout(async () => {
+      if (this.userRequestedDisconnect) return;
+      try {
+        await this.reconnectToExistingDevice();
+      } catch (err) {
+        console.warn(`[QAMQOR BLE] Ошибка переподключения (попытка ${this.reconnectAttempts}):`, err.message || err);
+        this.attemptAutoReconnect();
+      }
+    }, delayMs);
+  }
+
+  async reconnectToExistingDevice() {
+
+    if (!this.device || !this.device.gatt) {
+      throw new Error('Устройство BLE недоступно для переподключения');
+    }
+
+    const {
+      serviceUuid,
+      characteristicUuid
+    } = MODEL_CONFIG.ble;
+
+    // Снимаем старый слушатель gattserverdisconnected
+    this.device.removeEventListener(
+      'gattserverdisconnected',
+      this.handleDisconnectEvent
+    );
+    this.device.addEventListener(
+      'gattserverdisconnected',
+      this.handleDisconnectEvent
+    );
+
+    console.log(`[QAMQOR BLE] [${new Date().toLocaleTimeString('ru-RU')}] Повторное gatt.connect() к ${this.deviceName}...`);
+    this.server = await this.device.gatt.connect();
+
+    const service =
+      await this.server.getPrimaryService(serviceUuid);
+
+    this.characteristic =
+      await service.getCharacteristic(characteristicUuid);
+
+    await this.characteristic.startNotifications();
+
+    this.characteristic.removeEventListener(
+      'characteristicvaluechanged',
+      this.handleCharacteristicChange
+    );
+    this.characteristic.addEventListener(
+      'characteristicvaluechanged',
+      this.handleCharacteristicChange
+    );
+
+    if (typeof window !== 'undefined') {
+      window.__qamqor_ble_device = this.device;
+      window.__qamqor_ble_server = this.server;
+      window.__qamqor_ble_char = this.characteristic;
+    }
+
+    this.isConnected = true;
+    this.isReconnecting = false;
+    this.reconnectAttempts = 0;
+    this.connectionStartTime = Date.now();
+    this.lastPacketTime = Date.now();
+
+    this.updateStatus(
+      'connected_receiving',
+      'Соединение восстановлено'
+    );
+
+    console.log(
+      `[QAMQOR BLE] [${new Date().toLocaleTimeString('ru-RU')}] Соединение с ${this.deviceName} успешно восстановлено!`
+    );
+  }
+
+  clearReconnectTimer() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
     );
   }
 
@@ -490,8 +666,11 @@ export class BLEService {
       );
 
       if (this.onTelemetry) {
-
-        this.onTelemetry(telemetry);
+        try {
+          this.onTelemetry(telemetry);
+        } catch (consumerErr) {
+          console.error('[QAMQOR BLE] Ошибка в обработчике onTelemetry приложения:', consumerErr);
+        }
       }
 
       console.log(

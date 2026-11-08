@@ -305,11 +305,18 @@ export const App = {
         this.completeSurveyAndOpenApp();
       }
 
-      // Сохраняем замер в историю (не чаще раза в 15 секунд)
-      if (!this._lastHistSavedAt || Date.now() - this._lastHistSavedAt > 15000) {
+      // Сохраняем только валидные замеры (receiving, пульс 40-200, SpO2 70-100) не чаще раза в 5 секунд
+      const isPhysiologicalData = (
+        data.status === 'receiving' &&
+        typeof this.state.bpm === 'number' && this.state.bpm >= 40 && this.state.bpm <= 200 &&
+        typeof this.state.spo2 === 'number' && this.state.spo2 >= 70 && this.state.spo2 <= 100
+      );
+
+      if (isPhysiologicalData && (!this._lastHistSavedAt || Date.now() - this._lastHistSavedAt >= 5000)) {
         this._lastHistSavedAt = Date.now();
         const now = new Date();
         const histEntry = {
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
           timestamp: Date.now(),
           time: now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
           date: now.toLocaleDateString('ru-RU'),
@@ -318,13 +325,17 @@ export const App = {
           sdnn: this.state.sdnn != null ? Math.round(this.state.sdnn) : '—',
           index: this.state.modelEvaluation ? this.state.modelEvaluation.index : '—',
           zone: this.state.modelEvaluation ? this.state.modelEvaluation.zone : 'green',
-          source: 'BLE ESP32'
+          source: 'Qamqor Band (MAX30102)'
         };
-        const currentHist = StorageService.getHistory();
-        currentHist.unshift(histEntry);
-        if (currentHist.length > 50) currentHist.length = 50;
-        StorageService.saveHistory(currentHist);
-        this.renderRecentMeasurementsTable();
+        try {
+          const currentHist = StorageService.getHistory();
+          currentHist.unshift(histEntry);
+          if (currentHist.length > 500) currentHist.length = 500;
+          StorageService.saveHistory(currentHist);
+          this.renderRecentMeasurementsTable();
+        } catch (saveErr) {
+          console.warn('[Qamqor] Безопасная обработка сохранения истории:', saveErr);
+        }
       }
     } else {
       if (this.state.isConnected) {
@@ -385,9 +396,14 @@ export const App = {
       }
     } else {
       this._hasNotifiedConnect = false;
-      this.state.deviceState = (status.statusText && status.statusText.includes('потеряна')) ? 'connection_lost' : 'disconnected';
-      this.clearBiometrics();
-      this.showToast('Связь с браслетом разорвана', 'warning');
+      if (status.status === 'reconnecting') {
+        this.state.deviceState = 'reconnecting';
+        this.showToast(status.statusText || 'Соединение потеряно, переподключаюсь...', 'warning');
+      } else {
+        this.state.deviceState = (status.statusText && status.statusText.includes('потеряна')) ? 'connection_lost' : 'disconnected';
+        this.clearBiometrics();
+        this.showToast(status.statusText || 'Связь с браслетом разорвана', 'warning');
+      }
       if (this.ecgCanvas) {
         this.ecgCanvas.setStreamActive(false, false);
       }
@@ -1069,7 +1085,17 @@ export const App = {
       if (demoBar) demoBar.classList.add('hidden');
       if (realBar) realBar.classList.add('hidden');
 
-      if (this.state.deviceState === 'connection_lost') {
+      if (this.state.deviceState === 'reconnecting') {
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-500 animate-ping';
+        if (label) label.textContent = 'Переподключение...';
+        if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-amber-500 animate-ping';
+        if (sLabel) sLabel.textContent = 'Восстановление связи с браслетом...';
+        if (sBadge) {
+          sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-medium';
+          sBadge.textContent = 'Повтор';
+        }
+        if (sensorStatusText) sensorStatusText.textContent = 'Попытка автоматического переподключения...';
+      } else if (this.state.deviceState === 'connection_lost') {
         if (dot) dot.className = 'w-2 h-2 rounded-full bg-rose-500 animate-pulse';
         if (label) label.textContent = 'Связь потеряна';
         if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-rose-500 animate-pulse';

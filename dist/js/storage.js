@@ -115,9 +115,33 @@ export const StorageService = {
     const raw = localStorage.getItem(STORAGE_KEYS.HISTORY);
     if (!raw) return [];
     try {
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
+    }
+  },
+
+  saveHistory(history) {
+    if (!Array.isArray(history)) return false;
+    try {
+      // Ограничиваем историю максимум 500 записями
+      const trimmed = history.slice(0, 500);
+      localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(trimmed));
+      return true;
+    } catch (e) {
+      console.warn('[StorageService] Ошибка записи истории в localStorage:', e);
+      // Защита от переполнения квоты (QuotaExceededError)
+      if (e && (e.name === 'QuotaExceededError' || e.code === 22 || e.number === -2147024882)) {
+        try {
+          const reduced = history.slice(0, 100);
+          localStorage.setItem(STORAGE_KEYS.HISTORY, JSON.stringify(reduced));
+          return true;
+        } catch {
+          // Игнорируем критический отказ квоты
+        }
+      }
+      return false;
     }
   },
 
