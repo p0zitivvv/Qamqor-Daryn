@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
+import advisorHandler from './api/advisor.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +22,12 @@ const MIME_TYPES = {
 
 const server = http.createServer((req, res) => {
   let reqUrl = req.url.split('?')[0];
+
+  // Route /api/advisor
+  if (reqUrl === '/api/advisor') {
+    return advisorHandler(req, res);
+  }
+
   if (reqUrl === '/') reqUrl = '/index.html';
 
   const filePath = path.join(__dirname, reqUrl);

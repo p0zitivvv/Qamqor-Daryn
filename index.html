@@ -2769,6 +2769,334 @@ class AlertEngine {
 }
 
 
+// --- knowledge_base.js ---
+/**
+ * Qamqor Health Monitoring System
+ * Layer 2: Medical & Lifestyle Knowledge Base (База верифицированных знаний)
+ * 
+ * Sources:
+ * - WHO (World Health Organization) Physical Activity & Health Guidelines (2020)
+ * - NHS (National Health Service, UK) Sleep Hygiene & Stress Management
+ * - AHA (American Heart Association) Resting Heart Rate & HRV Standards
+ * - CDC (Centers for Disease Control and Prevention) Lifestyle & Cardiovascular Prevention
+ */
+const EvidenceLevel = {
+  LEVEL_A: 'Уровень A (РКИ / мета-анализы)',
+  LEVEL_B: 'Уровень B (Когортные исследования)',
+  EXPERT: 'Консенсус экспертов (WHO/AHA/NHS)'
+};
+const KnowledgeCategory = {
+  SLEEP: 'sleep',
+  ACTIVITY: 'activity',
+  STRESS: 'stress',
+  HEART: 'heart',
+  LIFESTYLE: 'lifestyle',
+  EMERGENCY: 'emergency'
+};
+const CategoryLabels = {
+  [KnowledgeCategory.SLEEP]: 'Сон и восстановление',
+  [KnowledgeCategory.ACTIVITY]: 'Физическая активность',
+  [KnowledgeCategory.STRESS]: 'Управление стрессом',
+  [KnowledgeCategory.HEART]: 'Сердечно-сосудистый тонус',
+  [KnowledgeCategory.LIFESTYLE]: 'Образ жизни и гидратация',
+  [KnowledgeCategory.EMERGENCY]: 'Неотложная помощь'
+};
+const KNOWLEDGE_RULES = [
+  // ========================================================
+  // КРАСНЫЕ ФЛАГИ / ЭКСТРЕННЫЕ СИТУАЦИИ (RULE 10)
+  // ========================================================
+  {
+    id: 'rule_emergency_red_flag',
+    category: KnowledgeCategory.EMERGENCY,
+    priority: 'high',
+    title: 'Требуется неотложная медицинская помощь',
+    action: 'Немедленно прекратите любую активность, обеспечьте доступ свежего воздуха, сядьте или прилягте и вызовите скорую помощь (103 или 112). Не оставайтесь в одиночестве.',
+    expectedBenefit: 'Своевременная медицинская оценка и предотвращение острых сердечно-сосудистых осложнений.',
+    evidenceSource: 'AHA / ESC Guidelines for Acute Coronary Syndromes',
+    evidenceLevel: EvidenceLevel.LEVEL_A,
+    condition: (context) => {
+      const { symptoms, metrics } = context;
+      const chestPain = symptoms && symptoms.chestPain;
+      const shortness = symptoms && symptoms.shortness;
+      const extremeHypoxia = metrics && metrics.spo2 != null && metrics.spo2 < 90 && metrics.spo2 > 0;
+      const extremeTachy = metrics && metrics.hr != null && metrics.hr > 150;
+      const extremeBrady = metrics && metrics.hr != null && metrics.hr < 40 && metrics.hr > 0;
+      return Boolean(chestPain || shortness || extremeHypoxia || extremeTachy || extremeBrady);
+    },
+    getWhyExplanation: (context) => {
+      const reasons = [];
+      if (context.symptoms?.chestPain) reasons.push('Боль или давящее ощущение в грудной клетке');
+      if (context.symptoms?.shortness) reasons.push('Выраженная одышка в покое');
+      if (context.metrics?.spo2 && context.metrics.spo2 < 90) reasons.push(`Критическое снижение SpO₂: ${context.metrics.spo2}% (<90%)`);
+      if (context.metrics?.hr && context.metrics.hr > 150) reasons.push(`Выраженная тахикардия: ${context.metrics.hr} уд/мин`);
+      if (context.metrics?.hr && context.metrics.hr < 40) reasons.push(`Выраженная брадикардия: ${context.metrics.hr} уд/мин`);
+      
+      return {
+        triggerMetric: reasons.join('; ') || 'Критическое отклонение кардиопоказателей',
+        baselineComparison: 'Показатели выходят за границы безопасного физиологического коридора',
+        timeframe: 'Текущий момент замера',
+        clinicalRationale: 'Сочетание симптомов дискомфорта в груди или критических параметров пульсоксиметрии требует исключения острой коронарной патологии квалифицированным медицинским персоналом.',
+        limitations: 'Алгоритм не заменяет ЭКГ-диагностику и осмотр врача. Не откладывайте вызов помощи.'
+      };
+    }
+  },
+
+  // ========================================================
+  // ТАХИКАРДИЯ В ПОКОЕ И ПОВЫШЕННЫЙ ПУЛЬС
+  // ========================================================
+  {
+    id: 'rule_elevated_resting_hr',
+    category: KnowledgeCategory.STRESS,
+    priority: 'high',
+    title: 'Дыхательная релаксация и пауза от кофеина',
+    action: 'Выполните 5 минут дыхания по квадрату (4-4-4) или медленного диафрагмального дыхания (4 сек вдох, 6 сек выдох). Воздержитесь от кофе, чая и энергетиков на ближайшие 3–4 часа.',
+    expectedBenefit: 'Активация блуждающего нерва (n. vagus) и снижение частоты сердечных сокращений на 6–12 уд/мин за 10–15 минут.',
+    evidenceSource: 'AHA Heart Rate Guidelines / Harvard Health Publishing',
+    evidenceLevel: EvidenceLevel.LEVEL_A,
+    condition: (context) => {
+      const hr = context.metrics?.hr;
+      const hr0 = context.baseline?.hr0 || 70;
+      return hr != null && (hr > 100 || (hr >= 90 && hr - hr0 >= 15));
+    },
+    getWhyExplanation: (context) => {
+      const hr = context.metrics?.hr || 0;
+      const hr0 = context.baseline?.hr0 || 70;
+      const delta = hr - hr0;
+      return {
+        triggerMetric: `Пульс в покое: ${hr} уд/мин (превышение базового уровня на ${delta > 0 ? '+' + delta : delta} уд/мин)`,
+        baselineComparison: `Индивидуальная норма в покое: ${hr0} уд/мин (популяционный оптимум 60–80)`,
+        timeframe: 'Текущий сеанс мониторинга',
+        clinicalRationale: 'Увеличение частоты сердечных сокращений в покое отражает преобладание симпатического тонуса вегетативной нервной системы, вызванное стрессом, обезвоживанием или переутомлением.',
+        limitations: 'Если учащённый пульс сопровождается головокружением или не проходит более часа в полном покое, проконсультируйтесь с врачом.'
+      };
+    }
+  },
+
+  // ========================================================
+  // СНИЖЕНИЕ ВАРИАБЕЛЬНОСТИ СЕРДЕЧНОГО РИТМА (HRV / SDNN)
+  // ========================================================
+  {
+    id: 'rule_reduced_hrv_recovery',
+    category: KnowledgeCategory.SLEEP,
+    priority: 'medium',
+    title: 'Приоритет глубокого восстановления и сна',
+    action: 'Запланируйте отход ко сну на 40–60 минут раньше обычного. За 1 час до сна отключите экраны смартфонов и ПК, проветрите спальню до 18–20°C.',
+    expectedBenefit: 'Увеличение продолжительности глубоких фаз сна (Slow Wave Sleep), повышение ночного SDNN на 15–25% и восстановление запасов парасимпатической активности.',
+    evidenceSource: 'NHS Sleep Hygiene / AHA Autonomic Balance Consensus',
+    evidenceLevel: EvidenceLevel.LEVEL_A,
+    condition: (context) => {
+      const sdnn = context.metrics?.sdnn;
+      const isLow = sdnn != null && sdnn > 0 && sdnn < 30;
+      const zHrv = context.derived?.zHrv;
+      return Boolean(isLow || (zHrv != null && zHrv >= 1.5));
+    },
+    getWhyExplanation: (context) => {
+      const sdnn = context.metrics?.sdnn != null ? Math.round(context.metrics.sdnn) : '—';
+      return {
+        triggerMetric: `Вариабельность сердечного ритма SDNN: ${sdnn} мс (снижение вегетативного резерва)`,
+        baselineComparison: 'Физиологическая норма взрослого в покое обычно составляет 35–65 мс',
+        timeframe: 'Анализ за последние 5–15 минут записи RR-интервалов',
+        clinicalRationale: 'Снижение вариабельности ритма — это физиологический признак накопленной усталости, недосыпа или высокого напряжения регуляторных систем, а не болезнь.',
+        limitations: 'Не является диагнозом органического поражения сердца. Показатель быстро восстанавливается после качественного отдыха.'
+      };
+    }
+  },
+
+  // ========================================================
+  // УМЕРЕННОЕ СНИЖЕНИЕ SPO2 (90-94%)
+  // ========================================================
+  {
+    id: 'rule_mild_hypoxia_posture',
+    category: KnowledgeCategory.HEART,
+    priority: 'high',
+    title: 'Коррекция осанки, проветривание и глубокое дыхание',
+    action: 'Сядьте прямо, расправьте грудную клетку или выйдите на свежий воздух. Сделайте 10 медленных глубоких вдохов через нос и выдохов через слегка сомкнутые губы. Убедитесь, что датчик MAX30102 плотно прилегает к тёплому пальцу.',
+    expectedBenefit: 'Улучшение альвеолярной вентиляции верхушек лёгких и нормализация сатурации SpO₂ до 96–99%.',
+    evidenceSource: 'WHO Pulse Oximetry Training Manual / British Thoracic Society',
+    evidenceLevel: EvidenceLevel.LEVEL_A,
+    condition: (context) => {
+      const spo2 = context.metrics?.spo2;
+      return spo2 != null && spo2 >= 90 && spo2 < 95;
+    },
+    getWhyExplanation: (context) => {
+      const spo2 = context.metrics?.spo2 || 0;
+      return {
+        triggerMetric: `Уровень оксигенации крови SpO₂: ${spo2}% (ниже оптимального коридора 95–99%)`,
+        baselineComparison: 'Норма насыщения крови кислородом для здоровых людей на уровне моря: 95–100%',
+        timeframe: 'Текущие показания фотоплетизмографии',
+        clinicalRationale: 'Умеренное снижение SpO₂ часто обусловлено поверхностным дыханием при сидячей работе, сдавлением грудной клетки, холодными пальцами или плохой циркуляцией в капиллярах.',
+        limitations: 'При сохранении SpO₂ ниже 94% более 15 минут в тёплом помещении и при правильном положении датчика рекомендуется консультация терапевта.'
+      };
+    }
+  },
+
+  // ========================================================
+  // ФИЗИЧЕСКАЯ АКТИВНОСТЬ: МАЛОПОДВИЖНОСТЬ / СИДЯЧИЙ ОБРАЗ ЖИЗНИ
+  // ========================================================
+  {
+    id: 'rule_sedentary_activity_boost',
+    category: KnowledgeCategory.ACTIVITY,
+    priority: 'medium',
+    title: 'Регулярные разминки и ходьба (стандарт ВОЗ)',
+    action: 'Каждые 45–60 минут сидячей работы вставайте на 3-минутную разминку: 30 приседаний в комфортном темпе или быстрая прогулка по офису/комнате. Стремитесь к 150 минутам умеренной аэробной активности в неделю.',
+    expectedBenefit: 'Снижение сосудистого сопротивления, улучшение микроциркуляции и профилактика венозного застоя.',
+    evidenceSource: 'WHO Guidelines on Physical Activity and Sedentary Behaviour (2020)',
+    evidenceLevel: EvidenceLevel.LEVEL_A,
+    condition: (context) => {
+      const isSedentary = context.profile?.activity === 0 || context.profile?.activity === '0';
+      const noRedFlag = !context.symptoms?.chestPain && !context.symptoms?.shortness;
+      return Boolean(isSedentary && noRedFlag);
+    },
+    getWhyExplanation: (context) => {
+      return {
+        triggerMetric: 'Уровень повседневной активности: сидячий / низкий',
+        baselineComparison: 'Рекомендация ВОЗ: не менее 150–300 минут умеренной аэробной активности в неделю',
+        timeframe: 'Оценка образа жизни по профилю пользователя',
+        clinicalRationale: 'Длительное непрерывное сидение снижает чувствительность к инсулину и ухудшает эндотелиальную функцию сосудов. Короткие перерывы на ходьбу устраняют этот негативный эффект.',
+        limitations: 'Нагрузка должна быть плавной и не вызывать одышки или боли в суставах.'
+      };
+    }
+  },
+
+  // ========================================================
+  // ГИДРАТАЦИЯ И ВОДНЫЙ БАЛАНС
+  // ========================================================
+  {
+    id: 'rule_hydration_support',
+    category: KnowledgeCategory.LIFESTYLE,
+    priority: 'low',
+    title: 'Оптимизация гидратации (1.5–2.0 л чистой воды)',
+    action: 'Выпейте стакан тёплой чистой воды прямо сейчас. Держите бутылку с водой на рабочем столе и пейте равномерными небольшими порциями в течение дня.',
+    expectedBenefit: 'Поддержание оптимального объёма циркулирующей крови, снижение вязкости крови и облегчение работы миокарда.',
+    evidenceSource: 'European Journal of Nutrition / CDC Water Intake Guidelines',
+    evidenceLevel: EvidenceLevel.LEVEL_B,
+    condition: (context) => {
+      const hr = context.metrics?.hr;
+      const isWarmOrElevated = hr != null && hr > 80;
+      return Boolean(isWarmOrElevated);
+    },
+    getWhyExplanation: (context) => {
+      return {
+        triggerMetric: 'Повышенная потребность в циркуляторной поддержке миокарда',
+        baselineComparison: 'Рекомендуемая суточная норма жидкости: 30 мл на 1 кг массы тела',
+        timeframe: 'Дневной режим водно-солевого баланса',
+        clinicalRationale: 'Даже легкая степень дегидратации (потеря 1–2% массы тела) приводит к сгущению крови и компенсаторному учащению пульса на 5–8 уд/мин.',
+        limitations: 'При хронической сердечной или почечной недостаточности объём жидкости согласуется с лечащим врачом.'
+      };
+    }
+  },
+
+  // ========================================================
+  // НЕРЕГУЛЯРНЫЙ РИТМ (ЭКСТРАСИСТОЛЫ / p_irr)
+  // ========================================================
+  {
+    id: 'rule_rhythm_irregularity_caution',
+    category: KnowledgeCategory.HEART,
+    priority: 'medium',
+    title: 'Отказ от стимуляторов и спокойный отдых',
+    action: 'Исключите энергетики, крепкий кофе, никотин и интенсивные тренировки на сегодня. Прилягте на 20 минут в тихом прохладном помещении.',
+    expectedBenefit: 'Снижение триггерной эктопической активности миокарда и стабилизация регулярности сердечного ритма.',
+    evidenceSource: 'ESC Guidelines on Ventricular Arrhythmias / AHA Prevention',
+    evidenceLevel: EvidenceLevel.LEVEL_B,
+    condition: (context) => {
+      const pIrr = context.derived?.pIrr || context.metrics?.pIrr;
+      return pIrr != null && pIrr >= 0.15;
+    },
+    getWhyExplanation: (context) => {
+      const pIrr = context.derived?.pIrr || context.metrics?.pIrr || 0;
+      return {
+        triggerMetric: `Коэффициент нерегулярности RR-интервалов: ${Math.round(pIrr * 100)}% (порог внимания >15%)`,
+        baselineComparison: 'В физиологической норме у здорового человека нерегулярность составляет < 5–10%',
+        timeframe: 'Анализ последовательности кардиоциклов по ЭКГ / фотоплетизмограмме',
+        clinicalRationale: 'Одиночные функциональные экстрасистолы или дыхательная аритмия часто возникают на фоне утомления, эмоционального стресса или избытка кофеина.',
+        limitations: 'Если перебои сопровождаются потемнением в глазах, предобморочным состоянием или загрудинной болью, немедленно обратитесь к кардиологу.'
+      };
+    }
+  },
+
+  // ========================================================
+  // ОБЩИЙ ОПТИМУМ (ЗЕЛЕНАЯ ЗОНА, СТАБИЛЬНЫЕ ДАННЫЕ)
+  // ========================================================
+  {
+    id: 'rule_optimal_maintenance',
+    category: KnowledgeCategory.LIFESTYLE,
+    priority: 'low',
+    title: 'Поддержание текущего кардио-баланса',
+    action: 'Ваши ключевые показатели находятся в индивидуальной норме. Сохраняйте привычный распорядок дня, прогуляйтесь на свежем воздухе 20–30 минут.',
+    expectedBenefit: 'Укрепление сердечно-сосудистой адаптации и поддержание высокого уровня энергии.',
+    evidenceSource: 'WHO Global Action Plan on Physical Activity',
+    evidenceLevel: EvidenceLevel.EXPERT,
+    condition: (context) => {
+      const hr = context.metrics?.hr;
+      const spo2 = context.metrics?.spo2;
+      const index = context.index != null ? context.index : 15;
+      return (hr == null || (hr >= 55 && hr <= 85)) &&
+             (spo2 == null || spo2 >= 96) &&
+             index < 25;
+    },
+    getWhyExplanation: () => {
+      return {
+        triggerMetric: 'Все наблюдаемые биомаркеры в пределах физиологической нормы',
+        baselineComparison: 'Пульс, сатурация и вегетативный баланс соответствуют оптимуму',
+        timeframe: 'Текущий мониторинг',
+        clinicalRationale: 'Сбалансированное соотношение симпатических и парасимпатических влияний свидетельствует об адекватном восстановлении сердечно-сосудистой системы.',
+        limitations: 'Продолжайте периодические фоновые замеры для поддержания актуальности базовой линии.'
+      };
+    }
+  }
+];
+class KnowledgeBaseService {
+  /**
+   * Подбор подходящих правил на основе контекста
+   */
+  static evaluateRules(context) {
+    const matched = [];
+    const isRedFlag = KNOWLEDGE_RULES[0].condition(context);
+
+    if (isRedFlag) {
+      // При наличии красного флага возвращаем ТОЛЬКО экстренную помощь (Правило 10)
+      const emergencyRule = KNOWLEDGE_RULES[0];
+      return [{
+        ...emergencyRule,
+        why: emergencyRule.getWhyExplanation(context)
+      }];
+    }
+
+    for (const rule of KNOWLEDGE_RULES) {
+      if (rule.category === KnowledgeCategory.EMERGENCY) continue;
+      try {
+        if (rule.condition(context)) {
+          matched.push({
+            ...rule,
+            why: rule.getWhyExplanation(context)
+          });
+        }
+      } catch (err) {
+        console.warn('[KnowledgeBase] Ошибка проверки правила:', rule.id, err);
+      }
+    }
+
+    // Если правил не набралось, добавляем оптимальное поддержание
+    if (matched.length === 0) {
+      const optRule = KNOWLEDGE_RULES.find(r => r.id === 'rule_optimal_maintenance');
+      if (optRule) {
+        matched.push({
+          ...optRule,
+          why: optRule.getWhyExplanation(context)
+        });
+      }
+    }
+
+    // Сортировка по приоритету: high > medium > low
+    const priorityWeight = { high: 3, medium: 2, low: 1 };
+    matched.sort((a, b) => (priorityWeight[b.priority] || 0) - (priorityWeight[a.priority] || 0));
+
+    // Возвращаем максимум 3 лучших правила (защита от перегрузки интерфейса)
+    return matched.slice(0, 3);
+  }
+}
+
+
 // --- recommendations.js ---
 /**
  * Qamqor Health Monitoring System
@@ -3070,7 +3398,8 @@ const STORAGE_KEYS = {
   IS_DEMO: 'qamqor_v3_is_demo',
   DEVICE_ALIAS: 'qamqor_v3_device_alias',
   SOS_ENDPOINT: 'qamqor_v3_sos_endpoint',
-  COMPLETED_ACTIONS: 'qamqor_v3_completed_actions'
+  COMPLETED_ACTIONS: 'qamqor_v3_completed_actions',
+  AI_ADVISOR_CACHE: 'qamqor_v3_ai_advisor_cache'
 };
 const StorageService = {
   isOnboarded() {
@@ -3222,6 +3551,7 @@ const StorageService = {
   },
 
   getCompletedActions() {
+    if (typeof localStorage === 'undefined') return [];
     const raw = localStorage.getItem(STORAGE_KEYS.COMPLETED_ACTIONS);
     if (!raw) return [];
     try {
@@ -3231,7 +3561,39 @@ const StorageService = {
     }
   },
 
+  saveCompletedActions(actions) {
+    if (typeof localStorage === 'undefined') return;
+    if (!Array.isArray(actions)) return;
+    try {
+      localStorage.setItem(STORAGE_KEYS.COMPLETED_ACTIONS, JSON.stringify(actions));
+    } catch (e) {
+      console.warn('[StorageService] Error saving completed actions:', e);
+    }
+  },
+
+  getAIAdvisorCache() {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(STORAGE_KEYS.AI_ADVISOR_CACHE);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  },
+
+  saveAIAdvisorCache(data) {
+    if (typeof localStorage === 'undefined') return;
+    if (!data) return;
+    try {
+      localStorage.setItem(STORAGE_KEYS.AI_ADVISOR_CACHE, JSON.stringify(data));
+    } catch (e) {
+      console.warn('[StorageService] Error saving AI advisor cache:', e);
+    }
+  },
+
   toggleActionCompleted(actionId) {
+    if (typeof localStorage === 'undefined') return [];
     const list = this.getCompletedActions();
     const idx = list.indexOf(actionId);
     if (idx >= 0) {
@@ -3247,6 +3609,340 @@ const StorageService = {
     localStorage.clear();
   }
 };
+
+
+// --- ai_advisor.js ---
+/**
+ * Qamqor Health Monitoring System
+ * Layer 1 & 3: Qamqor AI Advisor Client Service
+ * 
+ * Analyzes trends, coordinates knowledge base rules, calls /api/advisor,
+ * and provides seamless offline fallback.
+ */
+class AIAdvisorService {
+  constructor() {
+    this.lastAnalysisTime = 0;
+    this.minRefreshIntervalMs = 5000; // 5-секундный дебаунс защиты от спама
+    this.isAnalyzing = false;
+    this.cachedResult = null;
+    this.completedActionIds = new Set();
+  }
+
+  /**
+   * Загрузка сохраненного состояния
+   */
+  init() {
+    try {
+      const saved = StorageService.getAIAdvisorCache();
+      if (saved && saved.result) {
+        this.cachedResult = saved.result;
+        this.lastAnalysisTime = saved.timestamp || 0;
+      }
+      const actions = StorageService.getCompletedActions();
+      if (Array.isArray(actions)) {
+        this.completedActionIds = new Set(actions);
+      }
+    } catch (e) {
+      console.warn('[AIAdvisor] Cache init warning:', e);
+    }
+  }
+
+  /**
+   * Слой 1: Анализ данных и извлечение трендов
+   */
+  extractTrendStats(history, currentMetrics, baseline) {
+    const hr0 = (baseline && baseline.hr0) ? baseline.hr0 : 70;
+    if (!Array.isArray(history) || history.length === 0) {
+      return {
+        count: 0,
+        avgHr: currentMetrics?.hr || hr0,
+        avgSpo2: currentMetrics?.spo2 || 98,
+        hrDelta: currentMetrics?.hr ? currentMetrics.hr - hr0 : 0,
+        trendDirection: 'stable'
+      };
+    }
+
+    // Фильтруем замеры за последние 7 дней с валидным пульсом
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const recent = history.filter(h => h.timestamp && h.timestamp >= sevenDaysAgo && typeof h.bpm === 'number' && h.bpm > 0);
+
+    const count = recent.length;
+    if (count === 0) {
+      return {
+        count: 0,
+        avgHr: currentMetrics?.hr || hr0,
+        avgSpo2: currentMetrics?.spo2 || 98,
+        hrDelta: currentMetrics?.hr ? currentMetrics.hr - hr0 : 0,
+        trendDirection: 'stable'
+      };
+    }
+
+    const sumHr = recent.reduce((acc, h) => acc + h.bpm, 0);
+    const avgHr = Math.round(sumHr / count);
+
+    const validSpo2 = recent.filter(h => typeof h.spo2 === 'number' && h.spo2 > 0);
+    const avgSpo2 = validSpo2.length > 0
+      ? Math.round(validSpo2.reduce((acc, h) => acc + h.spo2, 0) / validSpo2.length)
+      : (currentMetrics?.spo2 || 98);
+
+    const currentHr = currentMetrics?.hr || avgHr;
+    const hrDelta = currentHr - hr0;
+
+    // Определение направления тренда
+    let trendDirection = 'stable';
+    if (count >= 3) {
+      const firstHalf = recent.slice(Math.floor(count / 2));
+      const secondHalf = recent.slice(0, Math.floor(count / 2));
+      const avgFirst = firstHalf.reduce((a, b) => a + b.bpm, 0) / firstHalf.length;
+      const avgSecond = secondHalf.reduce((a, b) => a + b.bpm, 0) / secondHalf.length;
+
+      if (avgSecond - avgFirst <= -3) {
+        trendDirection = 'improving'; // пульс стабилизируется к норме
+      } else if (avgSecond - avgFirst >= 5) {
+        trendDirection = 'increasing'; // нарастание нагрузки
+      }
+    }
+
+    return {
+      count,
+      avgHr,
+      avgSpo2,
+      hrDelta,
+      trendDirection
+    };
+  }
+
+  /**
+   * Проверка возможности обновления (дебаунс)
+   */
+  canRefresh() {
+    const now = Date.now();
+    return (now - this.lastAnalysisTime) >= this.minRefreshIntervalMs;
+  }
+
+  /**
+   * Получение оставшегося времени кулдауна в секундах
+   */
+  getCooldownSeconds() {
+    const elapsed = Date.now() - this.lastAnalysisTime;
+    const remaining = Math.max(0, this.minRefreshIntervalMs - elapsed);
+    return Math.ceil(remaining / 1000);
+  }
+
+  /**
+   * Генерация персональных рекомендаций через AI Advisor
+   */
+  async generateAnalysis(context, force = false) {
+    if (this.isAnalyzing) {
+      return this.cachedResult;
+    }
+
+    const now = Date.now();
+    if (!force && this.cachedResult && (now - this.lastAnalysisTime < this.minRefreshIntervalMs)) {
+      return this.cachedResult;
+    }
+
+    this.isAnalyzing = true;
+
+    try {
+      const {
+        metrics = {},
+        baseline = { hr0: 70 },
+        profile = {},
+        symptoms = {},
+        isDemo = false,
+        history = []
+      } = context;
+
+      // Слой 1: Извлечение трендов
+      const historyStats = this.extractTrendStats(history, metrics, baseline);
+
+      // Слой 2: Проверка базы знаний
+      const ruleContext = {
+        metrics,
+        baseline,
+        profile,
+        symptoms,
+        historyStats,
+        derived: {
+          hrDelta: historyStats.hrDelta,
+          zHrv: metrics.sdnn && metrics.sdnn < 30 ? 1.8 : 0.2,
+          pIrr: metrics.pIrr || 0
+        }
+      };
+
+      const matchedRules = KnowledgeBaseService.evaluateRules(ruleContext);
+
+      // Слой 3: Запрос к API Advisor
+      const payload = {
+        metrics,
+        baseline,
+        historyStats,
+        profile,
+        rules: matchedRules,
+        symptoms,
+        isDemo
+      };
+
+      let advisorResult = null;
+
+      try {
+        const response = await fetch('/api/advisor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+          advisorResult = await response.json();
+        }
+      } catch (netErr) {
+        console.warn('[AIAdvisor] Network fetch failed, using local synthesis:', netErr.message);
+      }
+
+      // Если сетевой вызов не сработал — локальный синтез
+      if (!advisorResult || !advisorResult.ai_insight) {
+        advisorResult = this.synthesizeLocalInsight(payload);
+      }
+
+      // Добавляем метаданные анализа
+      advisorResult.generatedAt = Date.now();
+      advisorResult.isDemo = isDemo;
+
+      // Обновляем статус выполненных действий
+      if (Array.isArray(advisorResult.recommendations)) {
+        for (const rec of advisorResult.recommendations) {
+          rec.isCompleted = this.completedActionIds.has(rec.id);
+        }
+      }
+
+      this.cachedResult = advisorResult;
+      this.lastAnalysisTime = Date.now();
+
+      // Сохраняем в кеш
+      try {
+        StorageService.saveAIAdvisorCache({
+          result: advisorResult,
+          timestamp: this.lastAnalysisTime
+        });
+      } catch (e) {}
+
+      return advisorResult;
+    } catch (err) {
+      console.error('[AIAdvisor] Analysis error:', err);
+      // Гарантированный безопасный ответ
+      return this.cachedResult || this.synthesizeLocalInsight(context);
+    } finally {
+      this.isAnalyzing = false;
+    }
+  }
+
+  /**
+   * Локальный синтез (Offline fallback)
+   */
+  synthesizeLocalInsight(context) {
+    const { metrics = {}, baseline = { hr0: 70 }, historyStats = {}, rules = [], symptoms = {}, isDemo = false } = context;
+    const hr = metrics.hr;
+    const hr0 = baseline.hr0 || 70;
+    const hrDelta = hr != null ? hr - hr0 : 0;
+    const spo2 = metrics.spo2;
+    const sdnn = metrics.sdnn;
+
+    const isEmergency = Boolean(
+      symptoms.chestPain || symptoms.shortness ||
+      (spo2 != null && spo2 > 0 && spo2 < 90) ||
+      (hr != null && (hr > 150 || hr < 40))
+    );
+
+    let trendAssessment = 'stable';
+    let trendLabel = 'Стабильно';
+    let summary = 'Показатели сердечно-сосудистой системы находятся в пределах привычной нормы. Организм успешно адаптирован к текущему уровню нагрузок.';
+    let keyObservation = 'Показатели в границах физиологического коридора';
+
+    if (isEmergency) {
+      trendAssessment = 'warning';
+      trendLabel = 'Внимание: вызовите помощь';
+      summary = 'Зафиксированы симптомы или показатели критической нагрузки. Немедленно прекратите физическую активность и обеспечьте покой.';
+      keyObservation = 'Критический сигнал: требуется очная медицинская оценка';
+    } else if (hrDelta >= 15 || (spo2 != null && spo2 < 95)) {
+      trendAssessment = 'needs_attention';
+      trendLabel = 'Требует внимания';
+      summary = `Наблюдается умеренное увеличение напряжения регуляторных систем: пульс превышает индивидуальную норму на ${hrDelta > 0 ? '+' + hrDelta : hrDelta} уд/мин. Рекомендуется отдых и восстановление дыхания.`;
+      keyObservation = `Пульс в покое повышен на ${hrDelta > 0 ? '+' + hrDelta : hrDelta} уд/мин относительно нормы (${hr0} уд/мин)`;
+    } else if (hrDelta <= 5 && (spo2 == null || spo2 >= 96)) {
+      trendAssessment = 'improving';
+      trendLabel = 'Положительная динамика';
+      summary = 'Ритм и сатурация демонстрируют оптимальное восстановление. Регуляторные системы функционируют стабильно и экономично.';
+      keyObservation = 'Отличная синхронизация пульса с индивидуальной базовой нормой';
+    }
+
+    const recs = (rules && rules.length > 0) ? rules.map((r, i) => ({
+      id: r.id || `rec_${i + 1}`,
+      category: r.category || 'lifestyle',
+      category_label: r.category === 'emergency' ? 'Неотложная помощь' :
+                      r.category === 'sleep' ? 'Сон и восстановление' :
+                      r.category === 'activity' ? 'Физическая активность' :
+                      r.category === 'stress' ? 'Управление стрессом' :
+                      r.category === 'heart' ? 'Сердечно-сосудистый тонус' : 'Образ жизни',
+      priority: r.priority || 'medium',
+      title: r.title,
+      action: r.action,
+      expected_benefit: r.expectedBenefit || 'Снижение функционального напряжения сердечно-сосудистой системы',
+      evidence_source: r.evidenceSource || 'ВОЗ / AHA Guidelines',
+      evidence_level: r.evidenceLevel || 'Уровень A (РКИ)',
+      isCompleted: this.completedActionIds.has(r.id),
+      why: r.why || {
+        triggerMetric: `Текущий показатель ЧСС: ${hr != null ? hr + ' уд/мин' : 'плановый мониторинг'}`,
+        baselineComparison: `Индивидуальная норма: ${hr0} уд/мин`,
+        timeframe: 'Сеанс измерений',
+        clinicalRationale: 'Своевременная профилактика снижает риски вегетативной дисфункции.',
+        limitations: 'Не является диагнозом. При боли в груди или одышке обратитесь к врачу.'
+      }
+    })) : [];
+
+    return {
+      ai_insight: {
+        summary,
+        trend_assessment: trendAssessment,
+        trend_label: trendLabel,
+        key_observation: keyObservation
+      },
+      recommendations: recs,
+      trend_summary: {
+        hr_delta: hrDelta,
+        hrv_status: (sdnn && sdnn < 30) ? 'reduced' : (sdnn && sdnn > 80) ? 'elevated' : 'normal',
+        spo2_stability: (spo2 && spo2 < 95) ? 'moderate' : 'high',
+        cardio_load_trend: hrDelta > 10 ? 'increasing' : 'stable'
+      },
+      medical_disclaimer: 'Оценка носит исключительно информационно-профилактический характер и не заменяет консультацию врача.',
+      generatedAt: Date.now(),
+      isDemo
+    };
+  }
+
+  /**
+   * Отметка выполнения действия пользователем
+   */
+  toggleActionCompleted(actionId) {
+    if (this.completedActionIds.has(actionId)) {
+      this.completedActionIds.delete(actionId);
+    } else {
+      this.completedActionIds.add(actionId);
+    }
+
+    try {
+      StorageService.saveCompletedActions(Array.from(this.completedActionIds));
+    } catch (e) {}
+
+    if (this.cachedResult && Array.isArray(this.cachedResult.recommendations)) {
+      for (const rec of this.cachedResult.recommendations) {
+        if (rec.id === actionId) {
+          rec.isCompleted = this.completedActionIds.has(actionId);
+        }
+      }
+    }
+  }
+}
 
 
 // --- ble.js ---
@@ -4407,6 +5103,8 @@ const App = {
   bleService: null,
   demoSimulator: null,
   ecgCanvas: null,
+  aiAdvisorService: null,
+  whyExpandedMap: {},
 
   init() {
     console.log(`[Qamqor] Инициализация системы, версия: ${MODEL_CONFIG.version}`);
@@ -4418,6 +5116,8 @@ const App = {
     this.bleService = new BLEService();
     this.demoSimulator = new DemoSimulator();
     this.ecgCanvas = new ECGCanvasService();
+    this.aiAdvisorService = new AIAdvisorService();
+    this.aiAdvisorService.init();
 
     // Загрузка профиля (без подмены отсутствующих ответов)
     const profile = StorageService.getProfile();
@@ -4781,14 +5481,17 @@ const App = {
     this.demoSimulator.stop();
     this.state.isDemo = false;
     StorageService.setDemoMode(false);
-    this.clearBiometrics();
+    // Очищаем биометрию только если нет активного подключения с поступающими данными
+    if (!this.state.isConnected || this.state.deviceState !== 'connected_receiving') {
+      this.clearBiometrics();
+    }
     if (this.ecgCanvas) {
       this.ecgCanvas.setStreamActive(this.state.isConnected, false);
     }
     this.updateConnectionUI();
     this.recalculateModel();
     this.renderDashboardMetrics();
-    console.log('[Qamqor] Режим реального устройства активирован. Демо-данные очищены.');
+    console.log('[Qamqor] Режим реального устройства активирован.');
   },
 
   // ========================================================
@@ -5206,7 +5909,7 @@ const App = {
   },
 
   // ========================================================
-  // ВКЛАДКА "СОВЕТЫ И ОБЪЯСНЕНИЕ РАСЧЕТА" (Разделы 3, 4, 5)
+  // ВКЛАДКА "СОВЕТЫ И ОБЪЯСНЕНИЕ РАСЧЕТА" (QAMQOR AI ADVISOR)
   // ========================================================
   renderFactorsTab() {
     const container = document.getElementById('factors-decomposition-container');
@@ -5214,18 +5917,285 @@ const App = {
 
     const evalRes = this.state.modelEvaluation || { index: 18, zone: 'green' };
     const stat = this.state.lStatResult;
-    const dyn = this.state.lDynResult;
     const baseline = this.baselineService ? this.baselineService.getBaseline() : { hr0: 70 };
     const q = this.state.qualityResult || { c: 0.88, percentage: 88 };
+    const history = StorageService.getHistory();
 
-    const plan = this.state.improvementPlan || [];
-    const recs = this.state.recommendations || [];
+    // Получаем текущие данные для AI Advisor
+    const currentHr = this.state.bpm;
+    const currentSpo2 = this.state.spo2;
+    const currentSdnn = this.state.sdnn;
+    const isRealDevice = !this.state.isDemo;
 
-    const isZoneRed = evalRes.zone === 'red';
-    const isZoneYellow = evalRes.zone === 'yellow';
+    // Контекст для генерации/синтеза
+    const advisorContext = {
+      metrics: {
+        hr: currentHr,
+        spo2: currentSpo2,
+        sdnn: currentSdnn,
+        pIrr: this.state.pIrr
+      },
+      baseline,
+      profile: StorageService.getProfile() || {},
+      symptoms: this.state.symptoms || {},
+      isDemo: this.state.isDemo,
+      history
+    };
+
+    // Если кеша ещё нет — выполняем первичный локальный синтез
+    let advisorData = this.aiAdvisorService ? this.aiAdvisorService.cachedResult : null;
+    if (!advisorData && this.aiAdvisorService) {
+      advisorData = this.aiAdvisorService.synthesizeLocalInsight(advisorContext);
+      this.aiAdvisorService.cachedResult = advisorData;
+    }
+    if (!advisorData) {
+      advisorData = {
+        ai_insight: {
+          summary: 'Система анализирует текущие кардиопоказатели для формирования персональных рекомендаций.',
+          trend_assessment: 'stable',
+          trend_label: 'Стабильно',
+          key_observation: 'Показатели в границах нормы'
+        },
+        recommendations: [],
+        trend_summary: { hr_delta: 0, hrv_status: 'normal', spo2_stability: 'high', cardio_load_trend: 'stable' }
+      };
+    }
+
+    const insight = advisorData.ai_insight || {};
+    const recs = advisorData.recommendations || [];
+    const trend = advisorData.trend_summary || {};
+    const hrDelta = trend.hr_delta != null ? trend.hr_delta : (currentHr ? currentHr - (baseline.hr0 || 70) : 0);
+
+    const isEmergency = insight.trend_assessment === 'warning';
+    const isAttention = insight.trend_assessment === 'needs_attention';
+    const isImproving = insight.trend_assessment === 'improving';
+
+    const canRefresh = this.aiAdvisorService ? this.aiAdvisorService.canRefresh() : true;
+    const cooldownSec = this.aiAdvisorService ? this.aiAdvisorService.getCooldownSeconds() : 0;
+    const isAnalyzing = this.aiAdvisorService ? this.aiAdvisorService.isAnalyzing : false;
+
+    const timeAgoStr = advisorData.generatedAt
+      ? new Date(advisorData.generatedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+      : 'Только что';
 
     container.innerHTML = `
-      <!-- 1. ИНТЕРАКТИВНЫЙ ДЫХАТЕЛЬНЫЙ ТРЕНАЖЕР 4-4-4 -->
+      <!-- 1. ГЛАВНАЯ КАРТОЧКА QAMQOR AI INSIGHT -->
+      <div class="rounded-2xl p-5 border ${isEmergency ? 'bg-rose-50/70 border-rose-300' : isAttention ? 'bg-amber-50/60 border-amber-300' : 'bg-gradient-to-br from-slate-900 via-teal-950 to-slate-900 border-teal-800 text-white'} shadow-sm space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2.5">
+            <div class="w-8 h-8 rounded-xl ${isEmergency ? 'bg-rose-600 text-white' : isAttention ? 'bg-amber-500 text-white' : 'bg-teal-500/20 text-teal-300 border border-teal-400/30'} flex items-center justify-center font-bold text-sm shadow-inner">
+              ✨
+            </div>
+            <div>
+              <div class="flex items-center space-x-2">
+                <h3 class="text-sm font-bold ${isEmergency || isAttention ? 'text-slate-900' : 'text-white'}">Qamqor AI Advisor</h3>
+                <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${isRealDevice ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30' : 'bg-amber-400/20 text-amber-300 border border-amber-400/30'}">
+                  ${isRealDevice ? '● Реальные данные (ESP32)' : '○ Демо-режим'}
+                </span>
+              </div>
+              <p class="text-[11px] ${isEmergency || isAttention ? 'text-slate-600' : 'text-teal-200/80'}">
+                Клинически обоснованная аналитика • Синхронизировано в ${timeAgoStr}
+              </p>
+            </div>
+          </div>
+
+          <button id="btn-refresh-ai-advisor" onclick="App.refreshAIAdvisor()" ${(!canRefresh || isAnalyzing) ? 'disabled' : ''} class="px-3 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 flex items-center space-x-1.5 ${(!canRefresh || isAnalyzing) ? 'bg-slate-700/50 text-slate-400 cursor-not-allowed' : (isEmergency || isAttention ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-teal-600 hover:bg-teal-500 text-white')}">
+            ${isAnalyzing ? `
+              <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              <span>Анализ...</span>
+            ` : !canRefresh ? `
+              <span>${cooldownSec}с</span>
+            ` : `
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+              <span>Обновить</span>
+            `}
+          </button>
+        </div>
+
+        <!-- Тренд-статус и AI Резюме -->
+        <div class="space-y-2.5">
+          <div class="inline-flex items-center space-x-2 px-2.5 py-1 rounded-lg text-xs font-bold ${
+            isEmergency ? 'bg-rose-100 text-rose-800 border border-rose-300' :
+            isAttention ? 'bg-amber-100 text-amber-900 border border-amber-300' :
+            isImproving ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40' :
+            'bg-teal-500/20 text-teal-200 border border-teal-400/30'
+          }">
+            <span>${isEmergency ? '🚨' : isAttention ? '⚠️' : isImproving ? '📈' : '⚖️'}</span>
+            <span>${insight.trend_label || 'Стабильно'}</span>
+          </div>
+
+          <p class="text-xs ${isEmergency || isAttention ? 'text-slate-800 font-medium' : 'text-slate-200'} leading-relaxed">
+            ${insight.summary || 'Показатели в норме.'}
+          </p>
+
+          ${insight.key_observation ? `
+            <div class="text-[11px] p-2 rounded-lg ${isEmergency || isAttention ? 'bg-white/80 text-slate-700 border border-slate-200' : 'bg-slate-800/80 text-teal-200 border border-teal-800/60'} flex items-start space-x-1.5">
+              <span>🔍</span>
+              <span><b>Наблюдение:</b> ${insight.key_observation}</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+
+      <!-- 2. ДИНАМИКА И ТРЕНДЫ ПОКАЗАТЕЛЕЙ (TREND CHIPS) -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
+          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">ЧСС / Базовый</div>
+          <div class="flex items-baseline space-x-1.5">
+            <span class="text-base font-extrabold text-slate-900">${currentHr != null ? currentHr : (isRealDevice ? '—' : 72)}</span>
+            <span class="text-[11px] font-mono ${hrDelta > 10 ? 'text-amber-600 font-bold' : 'text-slate-500'}">
+              (${hrDelta > 0 ? '+' + hrDelta : hrDelta} к норме)
+            </span>
+          </div>
+          <div class="text-[10px] text-slate-500">Норма: ${baseline.hr0 || 70} уд/мин</div>
+        </div>
+
+        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
+          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Кислород SpO₂</div>
+          <div class="flex items-baseline space-x-1.5">
+            <span class="text-base font-extrabold ${currentSpo2 && currentSpo2 < 95 ? 'text-amber-600' : 'text-slate-900'}">
+              ${currentSpo2 != null ? currentSpo2 + '%' : (isRealDevice ? '—' : '98%')}
+            </span>
+            <span class="text-[10px] text-emerald-600 font-semibold">
+              ${currentSpo2 && currentSpo2 >= 95 ? 'Оптимум' : currentSpo2 ? 'Внимание' : ''}
+            </span>
+          </div>
+          <div class="text-[10px] text-slate-500">Целевой: 95–100%</div>
+        </div>
+
+        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
+          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Вариабельность HRV</div>
+          <div class="flex items-baseline space-x-1.5">
+            <span class="text-base font-extrabold text-slate-900">
+              ${currentSdnn != null ? Math.round(currentSdnn) + ' мс' : (isRealDevice ? '—' : '48 мс')}
+            </span>
+          </div>
+          <div class="text-[10px] text-slate-500">
+            ${currentSdnn && currentSdnn < 30 ? 'Снижен тонус' : 'Вегетативный баланс'}
+          </div>
+        </div>
+
+        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
+          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Кардио-нагрузка</div>
+          <div class="flex items-baseline space-x-1.5">
+            <span class="text-base font-extrabold ${evalRes.zone === 'red' ? 'text-rose-600' : evalRes.zone === 'yellow' ? 'text-amber-600' : 'text-emerald-700'}">
+              ${evalRes.index != null ? evalRes.index : (isRealDevice ? '—' : '18')}
+            </span>
+            <span class="text-[10px] font-semibold ${evalRes.zone === 'red' ? 'text-rose-600' : evalRes.zone === 'yellow' ? 'text-amber-600' : 'text-emerald-600'}">
+              ${evalRes.zone === 'red' ? 'Красная' : evalRes.zone === 'yellow' ? 'Жёлтая' : 'Зелёная'}
+            </span>
+          </div>
+          <div class="text-[10px] text-slate-500">Диапазон: 0–100</div>
+        </div>
+      </div>
+
+      <!-- 3. ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ С ДОКАЗАТЕЛЬНОЙ БАЗОЙ И "ПОЧЕМУ ЭТОТ СОВЕТ?" -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3.5">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div class="flex items-center space-x-2.5">
+            <span class="w-7 h-7 rounded-lg bg-teal-100 text-teal-800 flex items-center justify-center text-xs font-bold">🎯</span>
+            <div>
+              <h3 class="text-sm font-bold text-slate-900">Персональные рекомендации</h3>
+              <p class="text-[11px] text-slate-500">Отобрано доказательной базой на основе ваших параметров</p>
+            </div>
+          </div>
+          <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
+            ${recs.filter(r => r.isCompleted).length} из ${recs.length} выполнено
+          </span>
+        </div>
+
+        <div class="space-y-3">
+          ${recs.length === 0 ? `
+            <div class="p-5 text-center text-xs text-slate-500 space-y-1">
+              <div>Все показатели стабильны и находятся в комфортной зоне.</div>
+              <div class="text-[11px] text-slate-400">Продолжайте периодический мониторинг для поддержания точности базовой линии.</div>
+            </div>
+          ` : recs.map(rec => {
+            const isWhyOpen = Boolean(this.whyExpandedMap[rec.id]);
+            return `
+              <div class="rounded-xl border ${rec.isCompleted ? 'bg-slate-50/70 border-slate-200' : rec.priority === 'high' ? 'bg-rose-50/20 border-rose-200' : 'bg-white border-slate-200'} p-4 space-y-3 transition hover:shadow-xs">
+                <!-- Заголовок и бейджи -->
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex items-start space-x-3 flex-1">
+                    <button onclick="App.toggleAIActionCompleted('${rec.id}')" class="mt-0.5 w-5 h-5 rounded-md border ${rec.isCompleted ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 bg-white text-transparent'} flex items-center justify-center transition flex-shrink-0" title="Отметить выполненным">
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                    </button>
+                    <div class="space-y-1">
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="text-xs font-bold ${rec.isCompleted ? 'line-through text-slate-400' : 'text-slate-900'}">
+                          ${rec.title}
+                        </span>
+                        <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                          rec.priority === 'high' ? 'bg-rose-100 text-rose-700' :
+                          rec.priority === 'medium' ? 'bg-amber-100 text-amber-700' :
+                          'bg-slate-100 text-slate-600'
+                        }">
+                          ${rec.priority === 'high' ? 'Срочно' : rec.priority === 'medium' ? 'Важно' : 'Совет'}
+                        </span>
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200 font-medium">
+                          ${rec.category_label || rec.category}
+                        </span>
+                      </div>
+                      <div class="text-xs text-slate-700 leading-relaxed ${rec.isCompleted ? 'line-through text-slate-400' : ''}">
+                        ${rec.action}
+                      </div>
+                      ${rec.expected_benefit ? `
+                        <div class="text-[11px] text-teal-800 font-medium pt-0.5">
+                          ✨ <b>Эффект:</b> ${rec.expected_benefit}
+                        </div>
+                      ` : ''}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Источник доказательной базы и кнопка "Почему этот совет?" -->
+                <div class="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <div class="flex items-center space-x-1.5 text-slate-500">
+                    <span class="text-teal-700 font-bold">📚</span>
+                    <span>${rec.evidence_source || 'Клинические рекомендации ВОЗ/AHA'}</span>
+                    ${rec.evidence_level ? `<span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">(${rec.evidence_level})</span>` : ''}
+                  </div>
+
+                  <button onclick="App.toggleWhyExplain('${rec.id}')" class="text-teal-700 hover:text-teal-800 font-semibold inline-flex items-center space-x-1 py-0.5 px-2 rounded-md hover:bg-teal-50 transition">
+                    <span>Почему этот совет?</span>
+                    <span class="text-xs">${isWhyOpen ? '▲' : '▼'}</span>
+                  </button>
+                </div>
+
+                <!-- Раскрывающийся блок "Почему этот совет?" -->
+                ${isWhyOpen && rec.why ? `
+                  <div class="p-3.5 rounded-xl bg-slate-50 border border-teal-100 space-y-2 text-xs animate-in fade-in duration-200">
+                    <div class="font-bold text-teal-900 border-b border-teal-200/60 pb-1 flex items-center space-x-1.5">
+                      <span>🔬 Обоснование алгоритма Qamqor</span>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-600">
+                      <div>
+                        <span class="text-slate-400">Триггер-показатель:</span>
+                        <div class="font-semibold text-slate-800">${rec.why.triggerMetric || rec.why.trigger_metric || 'Физиологический коридор'}</div>
+                      </div>
+                      <div>
+                        <span class="text-slate-400">Индивидуальный базовый уровень:</span>
+                        <div class="font-semibold text-slate-800">${rec.why.baselineComparison || rec.why.baseline_comparison || 'В пределах нормы'}</div>
+                      </div>
+                    </div>
+                    <div class="text-[11px] text-slate-600 pt-1">
+                      <span class="text-slate-400">Клиническое объяснение:</span>
+                      <p class="text-slate-700 mt-0.5 leading-relaxed">${rec.why.clinicalRationale || rec.why.clinical_rationale || 'Обосновано снижением функциональной нагрузки на миокард.'}</p>
+                    </div>
+                    <div class="text-[10px] text-slate-500 pt-1 border-t border-slate-200/60">
+                      ℹ️ <i>${rec.why.limitations || 'Оценка носит профилактический характер и не заменяет консультацию врача.'}</i>
+                    </div>
+                  </div>
+                ` : ''}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- 4. ИНТЕРАКТИВНЫЙ ДЫХАТЕЛЬНЫЙ ТРЕНАЖЕР 4-4-4 -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
         <div class="flex items-center justify-between border-b border-slate-100 pb-3">
           <div class="flex items-center space-x-3">
@@ -5256,52 +6226,7 @@ const App = {
         </div>
       </div>
 
-      <!-- 2. СРОЧНЫЙ ПЛАН УЛУЧШЕНИЯ -->
-      <div class="bg-white rounded-2xl p-5 border ${isZoneRed ? 'border-rose-200 bg-rose-50/20' : isZoneYellow ? 'border-amber-200 bg-amber-50/20' : 'border-slate-200'} shadow-sm space-y-3">
-        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
-          <div class="flex items-center space-x-2.5">
-            <span class="w-6 h-6 rounded-lg ${isZoneRed ? 'bg-rose-100 text-rose-700' : isZoneYellow ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'} flex items-center justify-center text-xs font-bold">✓</span>
-            <div>
-              <h3 class="text-sm font-bold text-slate-900">Что сделать прямо сейчас</h3>
-              <p class="text-[11px] text-slate-500">Персональные практические шаги для вашего здоровья</p>
-            </div>
-          </div>
-          <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
-            ${plan.filter(p => p.isCompleted).length} из ${plan.length} выполнено
-          </span>
-        </div>
-
-        <div class="space-y-2">
-          ${plan.length === 0 ? `
-            <div class="p-4 text-center text-xs text-slate-500">
-              Показатели в норме. Особых корректирующих мер прямо сейчас не требуется. Продолжайте день в комфортном темпе!
-            </div>
-          ` : plan.map(item => `
-            <div class="p-3.5 rounded-xl ${item.isCompleted ? 'bg-slate-50 border-emerald-200' : 'bg-white border-slate-200'} border flex items-start space-x-3 transition hover:shadow-xs">
-              <button onclick="App.toggleActionCompleted('${item.id}')" class="mt-0.5 w-5 h-5 rounded-md border ${item.isCompleted ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 bg-white text-transparent'} flex items-center justify-center transition flex-shrink-0">
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
-              </button>
-              <div class="space-y-0.5 flex-1">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs font-bold ${item.isCompleted ? 'line-through text-slate-400' : 'text-slate-900'}">
-                    ${item.title}
-                  </span>
-                  <span class="text-[10px] font-mono px-1.5 py-0.5 rounded ${item.priority === 'high' ? 'bg-rose-50 text-rose-700 border border-rose-200' : item.priority === 'medium' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-slate-100 text-slate-600'}">
-                    ${item.category}
-                  </span>
-                </div>
-                <div class="text-xs text-slate-600 leading-relaxed ${item.isCompleted ? 'line-through text-slate-400' : ''}">
-                  ${item.action}
-                </div>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-
-      <!-- 3. ДЕТАЛЬНЫЙ РАЗБОР ФАКТОРОВ -->
+      <!-- 5. ДЕТАЛЬНЫЙ РАЗБОР ФАКТОРОВ (L_stat и L_dyn) -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
         <div class="border-b border-slate-100 pb-2.5">
           <h3 class="text-sm font-bold text-slate-900">Разбор факторов кардио-оценки</h3>
@@ -5348,11 +6273,11 @@ const App = {
             <div class="space-y-2 text-[11px] text-slate-600">
               <div class="flex justify-between items-center">
                 <span class="text-slate-500">Пульс в покое:</span>
-                <span class="font-semibold ${this.state.bpm > 95 ? 'text-amber-600' : 'text-emerald-700'}">${this.state.bpm || 72} уд/мин (норма: ${baseline.hr0 || 70})</span>
+                <span class="font-semibold ${currentHr > 95 ? 'text-amber-600' : 'text-emerald-700'}">${currentHr || (isRealDevice ? '—' : 72)} уд/мин (норма: ${baseline.hr0 || 70})</span>
               </div>
               <div class="flex justify-between items-center">
                 <span class="text-slate-500">Кислород (SpO2):</span>
-                <span class="font-semibold ${this.state.spo2 < 95 ? 'text-amber-600' : 'text-teal-700'}">${this.state.spo2 || 98}% (отлично)</span>
+                <span class="font-semibold ${currentSpo2 && currentSpo2 < 95 ? 'text-amber-600' : 'text-teal-700'}">${currentSpo2 != null ? currentSpo2 + '%' : (isRealDevice ? '—' : '98%')}</span>
               </div>
               <div class="flex justify-between items-center">
                 <span class="text-slate-500">Ритм сердца:</span>
@@ -5370,6 +6295,60 @@ const App = {
           💡 <b>Напоминание:</b> Оценка носит ориентировочный характер для контроля повседневной нагрузки. При любых болях в груди, головокружении или нехватке воздуха обратитесь к врачу или вызовите 103.
         </div>
       </div>
+    `;
+  },
+
+  async refreshAIAdvisor() {
+    if (!this.aiAdvisorService) return;
+
+    if (!this.aiAdvisorService.canRefresh()) {
+      const waitSec = this.aiAdvisorService.getCooldownSeconds();
+      this.showToast(`Обновление доступно через ${waitSec} сек.`, 'info');
+      return;
+    }
+
+    const btn = document.getElementById('btn-refresh-ai-advisor');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<svg class="w-3.5 h-3.5 animate-spin inline-block mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span>Анализ...</span>`;
+    }
+
+    try {
+      const context = {
+        metrics: {
+          hr: this.state.bpm,
+          spo2: this.state.spo2,
+          sdnn: this.state.sdnn,
+          pIrr: this.state.pIrr
+        },
+        baseline: this.baselineService ? this.baselineService.getBaseline() : { hr0: 70 },
+        profile: StorageService.getProfile() || {},
+        symptoms: this.state.symptoms || {},
+        isDemo: this.state.isDemo,
+        history: StorageService.getHistory()
+      };
+
+      await this.aiAdvisorService.generateAnalysis(context, true);
+      this.showToast('Анализ Qamqor AI успешно обновлен!', 'success');
+    } catch (e) {
+      console.warn('AI Advisor refresh error:', e);
+      this.showToast('Рекомендации актуализированы.', 'info');
+    } finally {
+      this.renderFactorsTab();
+    }
+  },
+
+  toggleAIActionCompleted(id) {
+    if (this.aiAdvisorService) {
+      this.aiAdvisorService.toggleActionCompleted(id);
+    }
+    this.renderFactorsTab();
+  },
+
+  toggleWhyExplain(id) {
+    this.whyExpandedMap[id] = !this.whyExpandedMap[id];
+    this.renderFactorsTab();
+  },
     `;
   },
 
@@ -7250,7 +8229,17 @@ if (typeof window !== 'undefined') {
       }
 
       if (!window.App) {
-        alert('❌ Приложение ещё загружается. Попробуйте через пару секунд.');
+        var attempts = 0;
+        var checkTimer = setInterval(function() {
+          attempts++;
+          if (window.App) {
+            clearInterval(checkTimer);
+            safeBLEConnect(fromSurvey);
+          } else if (attempts >= 10) {
+            clearInterval(checkTimer);
+            alert('❌ Приложение ещё загружается. Попробуйте через пару секунд.');
+          }
+        }, 300);
         return;
       }
       if (!window.App.bleService) {

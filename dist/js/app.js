@@ -24,6 +24,8 @@ import { StorageService } from './storage.js';
 import { BLEService } from './ble.js';
 import { DemoSimulator } from './simulator.js';
 import { ECGCanvasService } from './ecg.js';
+import { KnowledgeBaseService } from './knowledge_base.js';
+import { AIAdvisorService } from './ai_advisor.js';
 
 export const App = {
   state: {
@@ -66,6 +68,8 @@ export const App = {
   bleService: null,
   demoSimulator: null,
   ecgCanvas: null,
+  aiAdvisorService: null,
+  whyExpandedMap: {},
 
   init() {
     console.log(`[Qamqor] Инициализация системы, версия: ${MODEL_CONFIG.version}`);
@@ -77,6 +81,8 @@ export const App = {
     this.bleService = new BLEService();
     this.demoSimulator = new DemoSimulator();
     this.ecgCanvas = new ECGCanvasService();
+    this.aiAdvisorService = new AIAdvisorService();
+    this.aiAdvisorService.init();
 
     // Загрузка профиля (без подмены отсутствующих ответов)
     const profile = StorageService.getProfile();
@@ -440,14 +446,17 @@ export const App = {
     this.demoSimulator.stop();
     this.state.isDemo = false;
     StorageService.setDemoMode(false);
-    this.clearBiometrics();
+    // Очищаем биометрию только если нет активного подключения с поступающими данными
+    if (!this.state.isConnected || this.state.deviceState !== 'connected_receiving') {
+      this.clearBiometrics();
+    }
     if (this.ecgCanvas) {
       this.ecgCanvas.setStreamActive(this.state.isConnected, false);
     }
     this.updateConnectionUI();
     this.recalculateModel();
     this.renderDashboardMetrics();
-    console.log('[Qamqor] Режим реального устройства активирован. Демо-данные очищены.');
+    console.log('[Qamqor] Режим реального устройства активирован.');
   },
 
   // ========================================================
@@ -865,7 +874,7 @@ export const App = {
   },
 
   // ========================================================
-  // ВКЛАДКА "СОВЕТЫ И ОБЪЯСНЕНИЕ РАСЧЕТА" (Разделы 3, 4, 5)
+  // ВКЛАДКА "СОВЕТЫ И ОБЪЯСНЕНИЕ РАСЧЕТА" (QAMQOR AI ADVISOR)
   // ========================================================
   renderFactorsTab() {
     const container = document.getElementById('factors-decomposition-container');
@@ -873,18 +882,285 @@ export const App = {
 
     const evalRes = this.state.modelEvaluation || { index: 18, zone: 'green' };
     const stat = this.state.lStatResult;
-    const dyn = this.state.lDynResult;
     const baseline = this.baselineService ? this.baselineService.getBaseline() : { hr0: 70 };
     const q = this.state.qualityResult || { c: 0.88, percentage: 88 };
+    const history = StorageService.getHistory();
 
-    const plan = this.state.improvementPlan || [];
-    const recs = this.state.recommendations || [];
+    // Получаем текущие данные для AI Advisor
+    const currentHr = this.state.bpm;
+    const currentSpo2 = this.state.spo2;
+    const currentSdnn = this.state.sdnn;
+    const isRealDevice = !this.state.isDemo;
 
-    const isZoneRed = evalRes.zone === 'red';
-    const isZoneYellow = evalRes.zone === 'yellow';
+    // Контекст для генерации/синтеза
+    const advisorContext = {
+      metrics: {
+        hr: currentHr,
+        spo2: currentSpo2,
+        sdnn: currentSdnn,
+        pIrr: this.state.pIrr
+      },
+      baseline,
+      profile: StorageService.getProfile() || {},
+      symptoms: this.state.symptoms || {},
+      isDemo: this.state.isDemo,
+      history
+    };
+
+    // Если кеша ещё нет — выполняем первичный локальный синтез
+    let advisorData = this.aiAdvisorService ? this.aiAdvisorService.cachedResult : null;
+    if (!advisorData && this.aiAdvisorService) {
+      advisorData = this.aiAdvisorService.synthesizeLocalInsight(advisorContext);
+      this.aiAdvisorService.cachedResult = advisorData;
+    }
+    if (!advisorData) {
+      advisorData = {
+        ai_insight: {
+          summary: 'Система анализирует текущие кардиопоказатели для формирования персональных рекомендаций.',
+          trend_assessment: 'stable',
+          trend_label: 'Стабильно',
+          key_observation: 'Показатели в границах нормы'
+        },
+        recommendations: [],
+        trend_summary: { hr_delta: 0, hrv_status: 'normal', spo2_stability: 'high', cardio_load_trend: 'stable' }
+      };
+    }
+
+    const insight = advisorData.ai_insight || {};
+    const recs = advisorData.recommendations || [];
+    const trend = advisorData.trend_summary || {};
+    const hrDelta = trend.hr_delta != null ? trend.hr_delta : (currentHr ? currentHr - (baseline.hr0 || 70) : 0);
+
+    const isEmergency = insight.trend_assessment === 'warning';
+    const isAttention = insight.trend_assessment === 'needs_attention';
+    const isImproving = insight.trend_assessment === 'improving';
+
+    const canRefresh = this.aiAdvisorService ? this.aiAdvisorService.canRefresh() : true;
+    const cooldownSec = this.aiAdvisorService ? this.aiAdvisorService.getCooldownSeconds() : 0;
+    const isAnalyzing = this.aiAdvisorService ? this.aiAdvisorService.isAnalyzing : false;
+
+    const timeAgoStr = advisorData.generatedAt
+      ? new Date(advisorData.generatedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+      : 'Только что';
 
     container.innerHTML = `
-      <!-- 1. ИНТЕРАКТИВНЫЙ ДЫХАТЕЛЬНЫЙ ТРЕНАЖЕР 4-4-4 -->
+      <!-- 1. ГЛАВНАЯ КАРТОЧКА QAMQOR AI INSIGHT -->
+      <div class="rounded-2xl p-5 border ${isEmergency ? 'bg-rose-50/70 border-rose-300' : isAttention ? 'bg-amber-50/60 border-amber-300' : 'bg-gradient-to-br from-slate-900 via-teal-950 to-slate-900 border-teal-800 text-white'} shadow-sm space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2.5">
+            <div class="w-8 h-8 rounded-xl ${isEmergency ? 'bg-rose-600 text-white' : isAttention ? 'bg-amber-500 text-white' : 'bg-teal-500/20 text-teal-300 border border-teal-400/30'} flex items-center justify-center font-bold text-sm shadow-inner">
+              ✨
+            </div>
+            <div>
+              <div class="flex items-center space-x-2">
+                <h3 class="text-sm font-bold ${isEmergency || isAttention ? 'text-slate-900' : 'text-white'}">Qamqor AI Advisor</h3>
+                <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${isRealDevice ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30' : 'bg-amber-400/20 text-amber-300 border border-amber-400/30'}">
+                  ${isRealDevice ? '● Реальные данные (ESP32)' : '○ Демо-режим'}
+                </span>
+              </div>
+              <p class="text-[11px] ${isEmergency || isAttention ? 'text-slate-600' : 'text-teal-200/80'}">
+                Клинически обоснованная аналитика • Синхронизировано в ${timeAgoStr}
+              </p>
+            </div>
+          </div>
+
+          <button id="btn-refresh-ai-advisor" onclick="App.refreshAIAdvisor()" ${(!canRefresh || isAnalyzing) ? 'disabled' : ''} class="px-3 py-1.5 rounded-xl text-xs font-semibold transition active:scale-95 flex items-center space-x-1.5 ${(!canRefresh || isAnalyzing) ? 'bg-slate-700/50 text-slate-400 cursor-not-allowed' : (isEmergency || isAttention ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-teal-600 hover:bg-teal-500 text-white')}">
+            ${isAnalyzing ? `
+              <svg class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+              <span>Анализ...</span>
+            ` : !canRefresh ? `
+              <span>${cooldownSec}с</span>
+            ` : `
+              <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+              <span>Обновить</span>
+            `}
+          </button>
+        </div>
+
+        <!-- Тренд-статус и AI Резюме -->
+        <div class="space-y-2.5">
+          <div class="inline-flex items-center space-x-2 px-2.5 py-1 rounded-lg text-xs font-bold ${
+            isEmergency ? 'bg-rose-100 text-rose-800 border border-rose-300' :
+            isAttention ? 'bg-amber-100 text-amber-900 border border-amber-300' :
+            isImproving ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40' :
+            'bg-teal-500/20 text-teal-200 border border-teal-400/30'
+          }">
+            <span>${isEmergency ? '🚨' : isAttention ? '⚠️' : isImproving ? '📈' : '⚖️'}</span>
+            <span>${insight.trend_label || 'Стабильно'}</span>
+          </div>
+
+          <p class="text-xs ${isEmergency || isAttention ? 'text-slate-800 font-medium' : 'text-slate-200'} leading-relaxed">
+            ${insight.summary || 'Показатели в норме.'}
+          </p>
+
+          ${insight.key_observation ? `
+            <div class="text-[11px] p-2 rounded-lg ${isEmergency || isAttention ? 'bg-white/80 text-slate-700 border border-slate-200' : 'bg-slate-800/80 text-teal-200 border border-teal-800/60'} flex items-start space-x-1.5">
+              <span>🔍</span>
+              <span><b>Наблюдение:</b> ${insight.key_observation}</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+
+      <!-- 2. ДИНАМИКА И ТРЕНДЫ ПОКАЗАТЕЛЕЙ (TREND CHIPS) -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
+          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">ЧСС / Базовый</div>
+          <div class="flex items-baseline space-x-1.5">
+            <span class="text-base font-extrabold text-slate-900">${currentHr != null ? currentHr : (isRealDevice ? '—' : 72)}</span>
+            <span class="text-[11px] font-mono ${hrDelta > 10 ? 'text-amber-600 font-bold' : 'text-slate-500'}">
+              (${hrDelta > 0 ? '+' + hrDelta : hrDelta} к норме)
+            </span>
+          </div>
+          <div class="text-[10px] text-slate-500">Норма: ${baseline.hr0 || 70} уд/мин</div>
+        </div>
+
+        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
+          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Кислород SpO₂</div>
+          <div class="flex items-baseline space-x-1.5">
+            <span class="text-base font-extrabold ${currentSpo2 && currentSpo2 < 95 ? 'text-amber-600' : 'text-slate-900'}">
+              ${currentSpo2 != null ? currentSpo2 + '%' : (isRealDevice ? '—' : '98%')}
+            </span>
+            <span class="text-[10px] text-emerald-600 font-semibold">
+              ${currentSpo2 && currentSpo2 >= 95 ? 'Оптимум' : currentSpo2 ? 'Внимание' : ''}
+            </span>
+          </div>
+          <div class="text-[10px] text-slate-500">Целевой: 95–100%</div>
+        </div>
+
+        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
+          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Вариабельность HRV</div>
+          <div class="flex items-baseline space-x-1.5">
+            <span class="text-base font-extrabold text-slate-900">
+              ${currentSdnn != null ? Math.round(currentSdnn) + ' мс' : (isRealDevice ? '—' : '48 мс')}
+            </span>
+          </div>
+          <div class="text-[10px] text-slate-500">
+            ${currentSdnn && currentSdnn < 30 ? 'Снижен тонус' : 'Вегетативный баланс'}
+          </div>
+        </div>
+
+        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
+          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Кардио-нагрузка</div>
+          <div class="flex items-baseline space-x-1.5">
+            <span class="text-base font-extrabold ${evalRes.zone === 'red' ? 'text-rose-600' : evalRes.zone === 'yellow' ? 'text-amber-600' : 'text-emerald-700'}">
+              ${evalRes.index != null ? evalRes.index : (isRealDevice ? '—' : '18')}
+            </span>
+            <span class="text-[10px] font-semibold ${evalRes.zone === 'red' ? 'text-rose-600' : evalRes.zone === 'yellow' ? 'text-amber-600' : 'text-emerald-600'}">
+              ${evalRes.zone === 'red' ? 'Красная' : evalRes.zone === 'yellow' ? 'Жёлтая' : 'Зелёная'}
+            </span>
+          </div>
+          <div class="text-[10px] text-slate-500">Диапазон: 0–100</div>
+        </div>
+      </div>
+
+      <!-- 3. ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ С ДОКАЗАТЕЛЬНОЙ БАЗОЙ И "ПОЧЕМУ ЭТОТ СОВЕТ?" -->
+      <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3.5">
+        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div class="flex items-center space-x-2.5">
+            <span class="w-7 h-7 rounded-lg bg-teal-100 text-teal-800 flex items-center justify-center text-xs font-bold">🎯</span>
+            <div>
+              <h3 class="text-sm font-bold text-slate-900">Персональные рекомендации</h3>
+              <p class="text-[11px] text-slate-500">Отобрано доказательной базой на основе ваших параметров</p>
+            </div>
+          </div>
+          <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
+            ${recs.filter(r => r.isCompleted).length} из ${recs.length} выполнено
+          </span>
+        </div>
+
+        <div class="space-y-3">
+          ${recs.length === 0 ? `
+            <div class="p-5 text-center text-xs text-slate-500 space-y-1">
+              <div>Все показатели стабильны и находятся в комфортной зоне.</div>
+              <div class="text-[11px] text-slate-400">Продолжайте периодический мониторинг для поддержания точности базовой линии.</div>
+            </div>
+          ` : recs.map(rec => {
+            const isWhyOpen = Boolean(this.whyExpandedMap[rec.id]);
+            return `
+              <div class="rounded-xl border ${rec.isCompleted ? 'bg-slate-50/70 border-slate-200' : rec.priority === 'high' ? 'bg-rose-50/20 border-rose-200' : 'bg-white border-slate-200'} p-4 space-y-3 transition hover:shadow-xs">
+                <!-- Заголовок и бейджи -->
+                <div class="flex items-start justify-between gap-2">
+                  <div class="flex items-start space-x-3 flex-1">
+                    <button onclick="App.toggleAIActionCompleted('${rec.id}')" class="mt-0.5 w-5 h-5 rounded-md border ${rec.isCompleted ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 bg-white text-transparent'} flex items-center justify-center transition flex-shrink-0" title="Отметить выполненным">
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                        <polyline points="20 6 9 17 4 12"/>
+                      </svg>
+                    </button>
+                    <div class="space-y-1">
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="text-xs font-bold ${rec.isCompleted ? 'line-through text-slate-400' : 'text-slate-900'}">
+                          ${rec.title}
+                        </span>
+                        <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                          rec.priority === 'high' ? 'bg-rose-100 text-rose-700' :
+                          rec.priority === 'medium' ? 'bg-amber-100 text-amber-700' :
+                          'bg-slate-100 text-slate-600'
+                        }">
+                          ${rec.priority === 'high' ? 'Срочно' : rec.priority === 'medium' ? 'Важно' : 'Совет'}
+                        </span>
+                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200 font-medium">
+                          ${rec.category_label || rec.category}
+                        </span>
+                      </div>
+                      <div class="text-xs text-slate-700 leading-relaxed ${rec.isCompleted ? 'line-through text-slate-400' : ''}">
+                        ${rec.action}
+                      </div>
+                      ${rec.expected_benefit ? `
+                        <div class="text-[11px] text-teal-800 font-medium pt-0.5">
+                          ✨ <b>Эффект:</b> ${rec.expected_benefit}
+                        </div>
+                      ` : ''}
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Источник доказательной базы и кнопка "Почему этот совет?" -->
+                <div class="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <div class="flex items-center space-x-1.5 text-slate-500">
+                    <span class="text-teal-700 font-bold">📚</span>
+                    <span>${rec.evidence_source || 'Клинические рекомендации ВОЗ/AHA'}</span>
+                    ${rec.evidence_level ? `<span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">(${rec.evidence_level})</span>` : ''}
+                  </div>
+
+                  <button onclick="App.toggleWhyExplain('${rec.id}')" class="text-teal-700 hover:text-teal-800 font-semibold inline-flex items-center space-x-1 py-0.5 px-2 rounded-md hover:bg-teal-50 transition">
+                    <span>Почему этот совет?</span>
+                    <span class="text-xs">${isWhyOpen ? '▲' : '▼'}</span>
+                  </button>
+                </div>
+
+                <!-- Раскрывающийся блок "Почему этот совет?" -->
+                ${isWhyOpen && rec.why ? `
+                  <div class="p-3.5 rounded-xl bg-slate-50 border border-teal-100 space-y-2 text-xs animate-in fade-in duration-200">
+                    <div class="font-bold text-teal-900 border-b border-teal-200/60 pb-1 flex items-center space-x-1.5">
+                      <span>🔬 Обоснование алгоритма Qamqor</span>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-600">
+                      <div>
+                        <span class="text-slate-400">Триггер-показатель:</span>
+                        <div class="font-semibold text-slate-800">${rec.why.triggerMetric || rec.why.trigger_metric || 'Физиологический коридор'}</div>
+                      </div>
+                      <div>
+                        <span class="text-slate-400">Индивидуальный базовый уровень:</span>
+                        <div class="font-semibold text-slate-800">${rec.why.baselineComparison || rec.why.baseline_comparison || 'В пределах нормы'}</div>
+                      </div>
+                    </div>
+                    <div class="text-[11px] text-slate-600 pt-1">
+                      <span class="text-slate-400">Клиническое объяснение:</span>
+                      <p class="text-slate-700 mt-0.5 leading-relaxed">${rec.why.clinicalRationale || rec.why.clinical_rationale || 'Обосновано снижением функциональной нагрузки на миокард.'}</p>
+                    </div>
+                    <div class="text-[10px] text-slate-500 pt-1 border-t border-slate-200/60">
+                      ℹ️ <i>${rec.why.limitations || 'Оценка носит профилактический характер и не заменяет консультацию врача.'}</i>
+                    </div>
+                  </div>
+                ` : ''}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+
+      <!-- 4. ИНТЕРАКТИВНЫЙ ДЫХАТЕЛЬНЫЙ ТРЕНАЖЕР 4-4-4 -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
         <div class="flex items-center justify-between border-b border-slate-100 pb-3">
           <div class="flex items-center space-x-3">
@@ -915,52 +1191,7 @@ export const App = {
         </div>
       </div>
 
-      <!-- 2. СРОЧНЫЙ ПЛАН УЛУЧШЕНИЯ -->
-      <div class="bg-white rounded-2xl p-5 border ${isZoneRed ? 'border-rose-200 bg-rose-50/20' : isZoneYellow ? 'border-amber-200 bg-amber-50/20' : 'border-slate-200'} shadow-sm space-y-3">
-        <div class="flex items-center justify-between border-b border-slate-100 pb-3">
-          <div class="flex items-center space-x-2.5">
-            <span class="w-6 h-6 rounded-lg ${isZoneRed ? 'bg-rose-100 text-rose-700' : isZoneYellow ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'} flex items-center justify-center text-xs font-bold">✓</span>
-            <div>
-              <h3 class="text-sm font-bold text-slate-900">Что сделать прямо сейчас</h3>
-              <p class="text-[11px] text-slate-500">Персональные практические шаги для вашего здоровья</p>
-            </div>
-          </div>
-          <span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200">
-            ${plan.filter(p => p.isCompleted).length} из ${plan.length} выполнено
-          </span>
-        </div>
-
-        <div class="space-y-2">
-          ${plan.length === 0 ? `
-            <div class="p-4 text-center text-xs text-slate-500">
-              Показатели в норме. Особых корректирующих мер прямо сейчас не требуется. Продолжайте день в комфортном темпе!
-            </div>
-          ` : plan.map(item => `
-            <div class="p-3.5 rounded-xl ${item.isCompleted ? 'bg-slate-50 border-emerald-200' : 'bg-white border-slate-200'} border flex items-start space-x-3 transition hover:shadow-xs">
-              <button onclick="App.toggleActionCompleted('${item.id}')" class="mt-0.5 w-5 h-5 rounded-md border ${item.isCompleted ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 bg-white text-transparent'} flex items-center justify-center transition flex-shrink-0">
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
-              </button>
-              <div class="space-y-0.5 flex-1">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs font-bold ${item.isCompleted ? 'line-through text-slate-400' : 'text-slate-900'}">
-                    ${item.title}
-                  </span>
-                  <span class="text-[10px] font-mono px-1.5 py-0.5 rounded ${item.priority === 'high' ? 'bg-rose-50 text-rose-700 border border-rose-200' : item.priority === 'medium' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-slate-100 text-slate-600'}">
-                    ${item.category}
-                  </span>
-                </div>
-                <div class="text-xs text-slate-600 leading-relaxed ${item.isCompleted ? 'line-through text-slate-400' : ''}">
-                  ${item.action}
-                </div>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-
-      <!-- 3. ДЕТАЛЬНЫЙ РАЗБОР ФАКТОРОВ -->
+      <!-- 5. ДЕТАЛЬНЫЙ РАЗБОР ФАКТОРОВ (L_stat и L_dyn) -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
         <div class="border-b border-slate-100 pb-2.5">
           <h3 class="text-sm font-bold text-slate-900">Разбор факторов кардио-оценки</h3>
@@ -1007,11 +1238,11 @@ export const App = {
             <div class="space-y-2 text-[11px] text-slate-600">
               <div class="flex justify-between items-center">
                 <span class="text-slate-500">Пульс в покое:</span>
-                <span class="font-semibold ${this.state.bpm > 95 ? 'text-amber-600' : 'text-emerald-700'}">${this.state.bpm || 72} уд/мин (норма: ${baseline.hr0 || 70})</span>
+                <span class="font-semibold ${currentHr > 95 ? 'text-amber-600' : 'text-emerald-700'}">${currentHr || (isRealDevice ? '—' : 72)} уд/мин (норма: ${baseline.hr0 || 70})</span>
               </div>
               <div class="flex justify-between items-center">
                 <span class="text-slate-500">Кислород (SpO2):</span>
-                <span class="font-semibold ${this.state.spo2 < 95 ? 'text-amber-600' : 'text-teal-700'}">${this.state.spo2 || 98}% (отлично)</span>
+                <span class="font-semibold ${currentSpo2 && currentSpo2 < 95 ? 'text-amber-600' : 'text-teal-700'}">${currentSpo2 != null ? currentSpo2 + '%' : (isRealDevice ? '—' : '98%')}</span>
               </div>
               <div class="flex justify-between items-center">
                 <span class="text-slate-500">Ритм сердца:</span>
@@ -1029,6 +1260,60 @@ export const App = {
           💡 <b>Напоминание:</b> Оценка носит ориентировочный характер для контроля повседневной нагрузки. При любых болях в груди, головокружении или нехватке воздуха обратитесь к врачу или вызовите 103.
         </div>
       </div>
+    `;
+  },
+
+  async refreshAIAdvisor() {
+    if (!this.aiAdvisorService) return;
+
+    if (!this.aiAdvisorService.canRefresh()) {
+      const waitSec = this.aiAdvisorService.getCooldownSeconds();
+      this.showToast(`Обновление доступно через ${waitSec} сек.`, 'info');
+      return;
+    }
+
+    const btn = document.getElementById('btn-refresh-ai-advisor');
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<svg class="w-3.5 h-3.5 animate-spin inline-block mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span>Анализ...</span>`;
+    }
+
+    try {
+      const context = {
+        metrics: {
+          hr: this.state.bpm,
+          spo2: this.state.spo2,
+          sdnn: this.state.sdnn,
+          pIrr: this.state.pIrr
+        },
+        baseline: this.baselineService ? this.baselineService.getBaseline() : { hr0: 70 },
+        profile: StorageService.getProfile() || {},
+        symptoms: this.state.symptoms || {},
+        isDemo: this.state.isDemo,
+        history: StorageService.getHistory()
+      };
+
+      await this.aiAdvisorService.generateAnalysis(context, true);
+      this.showToast('Анализ Qamqor AI успешно обновлен!', 'success');
+    } catch (e) {
+      console.warn('AI Advisor refresh error:', e);
+      this.showToast('Рекомендации актуализированы.', 'info');
+    } finally {
+      this.renderFactorsTab();
+    }
+  },
+
+  toggleAIActionCompleted(id) {
+    if (this.aiAdvisorService) {
+      this.aiAdvisorService.toggleActionCompleted(id);
+    }
+    this.renderFactorsTab();
+  },
+
+  toggleWhyExplain(id) {
+    this.whyExpandedMap[id] = !this.whyExpandedMap[id];
+    this.renderFactorsTab();
+  },
     `;
   },
 

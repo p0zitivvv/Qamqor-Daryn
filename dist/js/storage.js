@@ -16,7 +16,8 @@ const STORAGE_KEYS = {
   IS_DEMO: 'qamqor_v3_is_demo',
   DEVICE_ALIAS: 'qamqor_v3_device_alias',
   SOS_ENDPOINT: 'qamqor_v3_sos_endpoint',
-  COMPLETED_ACTIONS: 'qamqor_v3_completed_actions'
+  COMPLETED_ACTIONS: 'qamqor_v3_completed_actions',
+  AI_ADVISOR_CACHE: 'qamqor_v3_ai_advisor_cache'
 };
 
 export const StorageService = {
@@ -169,6 +170,7 @@ export const StorageService = {
   },
 
   getCompletedActions() {
+    if (typeof localStorage === 'undefined') return [];
     const raw = localStorage.getItem(STORAGE_KEYS.COMPLETED_ACTIONS);
     if (!raw) return [];
     try {
@@ -178,7 +180,39 @@ export const StorageService = {
     }
   },
 
+  saveCompletedActions(actions) {
+    if (typeof localStorage === 'undefined') return;
+    if (!Array.isArray(actions)) return;
+    try {
+      localStorage.setItem(STORAGE_KEYS.COMPLETED_ACTIONS, JSON.stringify(actions));
+    } catch (e) {
+      console.warn('[StorageService] Error saving completed actions:', e);
+    }
+  },
+
+  getAIAdvisorCache() {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(STORAGE_KEYS.AI_ADVISOR_CACHE);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  },
+
+  saveAIAdvisorCache(data) {
+    if (typeof localStorage === 'undefined') return;
+    if (!data) return;
+    try {
+      localStorage.setItem(STORAGE_KEYS.AI_ADVISOR_CACHE, JSON.stringify(data));
+    } catch (e) {
+      console.warn('[StorageService] Error saving AI advisor cache:', e);
+    }
+  },
+
   toggleActionCompleted(actionId) {
+    if (typeof localStorage === 'undefined') return [];
     const list = this.getCompletedActions();
     const idx = list.indexOf(actionId);
     if (idx >= 0) {

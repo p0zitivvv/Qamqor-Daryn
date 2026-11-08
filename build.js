@@ -8,8 +8,10 @@ const files = [
   'quality.js',
   'baseline.js',
   'alerts.js',
+  'knowledge_base.js',
   'recommendations.js',
   'storage.js',
+  'ai_advisor.js',
   'ble.js',
   'simulator.js',
   'ecg.js',
@@ -83,6 +85,18 @@ for (const targetDir of targetDirs) {
   const jsFiles = fs.readdirSync('js');
   for (const jf of jsFiles) {
     fs.copyFileSync(path.join('js', jf), path.join(targetJsDir, jf));
+  }
+
+  // Копирование api/
+  if (fs.existsSync('api')) {
+    const targetApiDir = path.join(targetDir, 'api');
+    if (!fs.existsSync(targetApiDir)) {
+      fs.mkdirSync(targetApiDir, { recursive: true });
+    }
+    const apiFiles = fs.readdirSync('api');
+    for (const af of apiFiles) {
+      fs.copyFileSync(path.join('api', af), path.join(targetApiDir, af));
+    }
   }
 }
 console.log('dist and public directories prepared successfully with all static assets!');
