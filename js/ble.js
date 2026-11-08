@@ -450,8 +450,6 @@ export class BLEService {
       this.reconnectTimer = null;
     }
   }
-    );
-  }
 
   // =========================================
   // PACKET HANDLER

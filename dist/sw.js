@@ -1,5 +1,5 @@
-// Qamqor Health Monitoring System - PWA Service Worker v3.3
-const CACHE_NAME = 'qamqor-cache-v3.3';
+// Qamqor Health Monitoring System - PWA Service Worker v3.4
+const CACHE_NAME = 'qamqor-cache-v3.4';
 const PRECACHE_ASSETS = [
   './',
   './index.html',
