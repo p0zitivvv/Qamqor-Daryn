@@ -289,17 +289,18 @@ export const App = {
   handleBLETelemetry(data) {
     if (this.state.isDemo) return; // Игнорируем в демо-режиме
 
-    const hasPulse = data.bpm != null && data.bpm > 0 && data.spo2 != null && data.spo2 > 0;
-    const hasActiveECG = data.hasActiveECG === true || (data.ecg != null && data.ecg > 10 && data.ecg < 4085 && data.ecg !== 2048);
-    const hasValidSensors = (data.hasValidSensors === true) || hasPulse || hasActiveECG;
-
-    if (hasValidSensors) {
+    if (data.hasValidSensors) {
       this.state.deviceState = 'connected_receiving';
       this.state.lastTelemetryTimestamp = Date.now();
+      if (data.bpm != null && data.bpm > 0) this.state.bpm = data.bpm;
+      if (data.spo2 != null && data.spo2 > 0) this.state.spo2 = data.spo2;
+    } else {
+      if (this.state.isConnected) {
+        this.state.deviceState = 'connected_no_data';
+        this.state.bpm = null;
+        this.state.spo2 = null;
+      }
     }
-
-    if (data.bpm != null && data.bpm > 0) this.state.bpm = data.bpm;
-    if (data.spo2 != null && data.spo2 > 0) this.state.spo2 = data.spo2;
 
     if (data.ecg != null && this.ecgCanvas) {
       this.ecgCanvas.pushRealSample(data.ecg);
@@ -316,6 +317,9 @@ export const App = {
       } catch(e) {
         console.warn('SDNN/pIrr calculation error:', e);
       }
+    } else if (!data.hasValidSensors) {
+      this.state.sdnn = null;
+      this.state.pIrr = null;
     }
 
     this.recalculateModel();
@@ -325,14 +329,21 @@ export const App = {
 
   handleBLEStatusChange(status) {
     this.state.isConnected = status.connected;
+    if (status.status) {
+      this.state.deviceState = status.status;
+    }
     if (status.connected) {
-      this.state.deviceState = 'connected_no_data';
-      this.state.deviceName = status.deviceName || 'Qamqor Band';
-      this.showToast(`Браслет ${this.state.deviceName} подключен. Ожидаем данные с датчиков.`, 'success');
+      if (!status.status) this.state.deviceState = 'connected_no_data';
+      this.state.deviceName = status.deviceName || 'Qamqor_Band';
+      if (!this._hasNotifiedConnect) {
+        this.showToast(`Браслет ${this.state.deviceName} подключен. Ожидаем палец на датчике.`, 'success');
+        this._hasNotifiedConnect = true;
+      }
       if (this.ecgCanvas) {
         this.ecgCanvas.setStreamActive(true, false); // allowSynthetic = false
       }
     } else {
+      this._hasNotifiedConnect = false;
       this.state.deviceState = (status.statusText && status.statusText.includes('потеряна')) ? 'connection_lost' : 'disconnected';
       this.clearBiometrics();
       this.showToast('Связь с браслетом разорвана', 'warning');

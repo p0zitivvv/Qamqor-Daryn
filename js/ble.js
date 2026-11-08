@@ -1,182 +1,519 @@
 /**
  * Qamqor Health Monitoring System
- * Модуль интеграции с Web Bluetooth API (BLE Layer)
- * Реализация спецификации раздела 1.2, 7, 12.1
+ * BLE Service — ESP32 + MAX30102
+ *
+ * Device: Qamqor_Band
+ * Service UUID:
+ * 4fafc201-1fb5-459e-8fcc-c5c9c331914b
+ *
+ * Characteristic UUID:
+ * beb5483e-36e1-4688-b7f5-ea07361b26a8
  */
 
 import { MODEL_CONFIG } from './config.js';
-import { validatePulseOximetry, RPeakDetector, checkECGSignalQuality } from './signals.js';
+import {
+  validatePulseOximetry,
+  RPeakDetector,
+  checkECGSignalQuality
+} from './signals.js';
 
 export class BLEService {
+
   constructor() {
+
     this.device = null;
     this.server = null;
     this.characteristic = null;
-    this.isConnected = false;
-    this.deviceName = 'Qamqor Band';
-    
-    // Внутренний обработчик R-пиков ЭКГ для реального времени
-    this.rPeakDetector = new RPeakDetector(25); // 25 Гц частота опроса ESP32
 
-    // Коллбеки
-    this.onTelemetry = null; // ({ bpm, spo2, ecg, rPeak, instantaneousBpm, timestamp })
-    this.onStatusChange = null; // ({ connected, deviceName, statusText })
+    this.isConnected = false;
+
+    this.deviceName = 'Qamqor_Band';
+
+    this.rPeakDetector = new RPeakDetector(25);
+
+    this.onTelemetry = null;
+    this.onStatusChange = null;
     this.onError = null;
+
+    this.lastPacketTime = null;
+    this.lastValidMeasurement = null;
+
+    this.connectionTimeout = null;
+
+    this.status = 'disconnected';
+
+    this.handleCharacteristicChange =
+      this.handlePacket.bind(this);
+
+    this.handleDisconnectEvent =
+      this.handleDisconnected.bind(this);
   }
 
+  // =========================================
+  // BROWSER SUPPORT
+  // =========================================
+
   isSupported() {
-    return 'bluetooth' in navigator;
+    return (
+      typeof navigator !== 'undefined' &&
+      'bluetooth' in navigator
+    );
   }
 
   isSecureContext() {
-    return window.isSecureContext || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    return (
+      window.isSecureContext ||
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1'
+    );
   }
 
-  async connect() {
-    if (!this.isSupported()) {
-      throw new Error('Ваш браузер не поддерживает Web Bluetooth API. Используйте Chrome, Edge или Bluefy на iOS.');
+  // =========================================
+  // STATUS MANAGEMENT
+  // =========================================
+
+  updateStatus(status, statusText) {
+
+    this.status = status;
+
+    if (this.onStatusChange) {
+
+      this.onStatusChange({
+        connected: this.isConnected,
+        deviceName: this.deviceName,
+        status,
+        statusText
+      });
     }
+  }
+
+  emitEmptyTelemetry(status) {
+
+    this.rPeakDetector.reset();
+
+    this.lastValidMeasurement = null;
+
+    if (this.onTelemetry) {
+
+      this.onTelemetry({
+
+        bpm: null,
+        spo2: null,
+
+        rawBpm: null,
+        rawSpO2: null,
+
+        ecg: null,
+        ecgQuality: null,
+
+        pulseValidation: {
+          isValid: false,
+          bpm: null,
+          spo2: null
+        },
+
+        hasValidSensors: false,
+        hasActivePulse: false,
+        hasActiveECG: false,
+
+        rPeak: false,
+        instantaneousBpm: null,
+
+        rrIntervals: [],
+
+        timestamp: Date.now(),
+
+        status
+      });
+    }
+  }
+
+  // =========================================
+  // CONNECT
+  // =========================================
+
+  async connect() {
+
+    if (!this.isSupported()) {
+
+      throw new Error(
+        'Браузер не поддерживает Web Bluetooth API.'
+      );
+    }
+
     if (!this.isSecureContext()) {
-      throw new Error('Web Bluetooth требует защищенного соединения HTTPS или localhost.');
+
+      throw new Error(
+        'Web Bluetooth требует HTTPS или localhost.'
+      );
     }
 
     try {
-      const { serviceUuid, characteristicUuid, deviceName } = MODEL_CONFIG.ble;
 
-      // 1. Поиск устройства
-      this.device = await navigator.bluetooth.requestDevice({
+      const {
+        serviceUuid,
+        characteristicUuid
+      } = MODEL_CONFIG.ble;
+
+      const device = await navigator.bluetooth.requestDevice({
+
         filters: [
-          { name: deviceName },
+          { name: 'Qamqor_Band' },
+          { name: 'Qamqor Band' },
           { namePrefix: 'Qamqor' }
         ],
-        optionalServices: [serviceUuid]
+
+        optionalServices: [
+          serviceUuid
+        ]
       });
 
-      this.deviceName = this.device.name || 'Qamqor_Band';
-      this.device.addEventListener('gattserverdisconnected', () => this.handleDisconnected());
+      this.device = device;
 
-      // 2. Подключение к серверу GATT
-      this.server = await this.device.gatt.connect();
+      this.deviceName =
+        device.name || 'Qamqor_Band';
 
-      // 3. Получение службы и характеристики
-      const service = await this.server.getPrimaryService(serviceUuid);
-      this.characteristic = await service.getCharacteristic(characteristicUuid);
-      // 4. Подписка на уведомления
+      this.device.addEventListener(
+        'gattserverdisconnected',
+        this.handleDisconnectEvent
+      );
+
+      console.log('[QAMQOR BLE] Connecting...');
+
+      this.server = await device.gatt.connect();
+
+      const service =
+        await this.server.getPrimaryService(serviceUuid);
+
+      this.characteristic =
+        await service.getCharacteristic(characteristicUuid);
+
       await this.characteristic.startNotifications();
-      this.characteristic.addEventListener('characteristicvaluechanged', (e) => this.handlePacket(e));
+
+      this.characteristic.addEventListener(
+        'characteristicvaluechanged',
+        this.handleCharacteristicChange
+      );
 
       this.isConnected = true;
-      if (this.onStatusChange) {
-        this.onStatusChange({
-          connected: true,
-          deviceName: this.deviceName,
-          statusText: 'Подключено по BLE'
-        });
-      }
+
+      this.lastPacketTime = Date.now();
+
+      this.emitEmptyTelemetry('connected_no_data');
+
+      this.updateStatus(
+        'connected_no_data',
+        'Подключено. Ожидание данных датчика'
+      );
+
+      console.log(
+        '[QAMQOR BLE] Connected:',
+        this.deviceName
+      );
 
       return this.deviceName;
-    } catch (err) {
+
+    } catch (error) {
+
       this.isConnected = false;
-      if (this.onError) this.onError(err);
-      throw err;
+
+      this.updateStatus(
+        'disconnected',
+        'Не удалось подключиться'
+      );
+
+      console.error(
+        '[QAMQOR BLE] Connection error:',
+        error
+      );
+
+      if (this.onError) {
+        this.onError(error);
+      }
+
+      throw error;
     }
   }
 
+  // =========================================
+  // DISCONNECT
+  // =========================================
+
   disconnect() {
+
     if (this.device && this.device.gatt.connected) {
+
       this.device.gatt.disconnect();
+
+    } else {
+
+      this.handleDisconnected();
     }
-    this.isConnected = false;
   }
 
   handleDisconnected() {
+
     this.isConnected = false;
-    this.rPeakDetector.reset();
-    if (this.onStatusChange) {
-      this.onStatusChange({
-        connected: false,
-        deviceName: this.deviceName,
-        statusText: 'Связь с браслетом потеряна'
-      });
-    }
+
+    this.characteristic = null;
+    this.server = null;
+
+    this.lastPacketTime = null;
+
+    this.emitEmptyTelemetry('disconnected');
+
+    this.updateStatus(
+      'disconnected',
+      'Связь с браслетом потеряна'
+    );
+
+    console.warn(
+      '[QAMQOR BLE] Disconnected'
+    );
   }
 
+  // =========================================
+  // PACKET HANDLER
+  // =========================================
+
   handlePacket(event) {
+
     try {
+
       const dataView = event.target.value;
+
       const decoder = new TextDecoder('utf-8');
+
       const text = decoder.decode(dataView).trim();
-      const now = Date.now();
 
-      let bpm = null;
-      let spo2 = null;
-      let ecg = null;
+      if (!text) return;
 
-      // 1. Парсинг формата JSON: {"bpm":72,"spo2":98,"ecg":2048}
-      if (text.startsWith('{') && text.endsWith('}')) {
-        const json = JSON.parse(text);
-        bpm = json.bpm;
-        spo2 = json.spo2;
-        ecg = json.ecg;
-      } else if (text.includes(',') || text.includes(':')) {
-        // Формат CSV/Key-Value
-        const parts = text.split(',');
-        parts.forEach(p => {
-          const pair = p.split(':');
-          if (pair.length === 2) {
-            const k = pair[0].trim().toUpperCase();
-            const v = parseFloat(pair[1]);
-            if (k === 'BPM') bpm = v;
-            if (k === 'SPO2') spo2 = v;
-            if (k === 'ECG') ecg = v;
-          }
-        });
-      } else if (dataView.byteLength >= 4) {
-        // Двоичный формат
-        bpm = dataView.getUint8(0);
-        spo2 = dataView.getUint8(1);
-        ecg = dataView.getUint16(2, false);
+      this.lastPacketTime = Date.now();
+
+      console.log(
+        '[QAMQOR BLE] Received:',
+        text
+      );
+
+      let json;
+
+      try {
+
+        json = JSON.parse(text);
+
+      } catch (error) {
+
+        console.warn(
+          '[QAMQOR BLE] Invalid JSON:',
+          text
+        );
+
+        return;
       }
 
-      // 2. Валидация пульса и SpO2
-      const pulseValidation = validatePulseOximetry(bpm, spo2);
+      // =====================================
+      // DEVICE STATUS
+      // =====================================
 
-      // 3. Обработка отсчета ЭКГ через детектор R-пиков
-      let peakResult = null;
+      const deviceStatus = json.status || 'receiving';
+
+      if (deviceStatus !== 'receiving') {
+
+        const statusMap = {
+
+          calculating: 'connected_no_data',
+
+          no_finger: 'connected_no_data',
+
+          sensor_error: 'connected_no_data',
+
+          initializing: 'connected_no_data'
+        };
+
+        const uiStatus =
+          statusMap[deviceStatus] ||
+          'connected_no_data';
+
+        this.emitEmptyTelemetry(deviceStatus);
+
+        this.updateStatus(
+          uiStatus,
+          this.getStatusText(deviceStatus)
+        );
+
+        return;
+      }
+
+      // =====================================
+      // PARSE REAL MEASUREMENTS
+      // =====================================
+
+      const bpm = Number(
+        json.heartRate ?? json.bpm
+      );
+
+      const spo2 = Number(json.spo2);
+
+      const rawEcg = json.ecg != null ? Number(json.ecg) : null;
+      const hasActiveECG = Number.isFinite(rawEcg) && rawEcg > 10 && rawEcg < 4085 && rawEcg !== 2048;
+
+      if (
+        !Number.isFinite(bpm) ||
+        !Number.isFinite(spo2)
+      ) {
+
+        console.warn(
+          '[QAMQOR BLE] Invalid measurement values'
+        );
+
+        this.emitEmptyTelemetry('invalid');
+
+        return;
+      }
+
+      // =====================================
+      // VALIDATE PULSE OXIMETRY
+      // =====================================
+
+      const pulseValidation =
+        validatePulseOximetry(bpm, spo2);
+
+      const isValid =
+        pulseValidation?.isValid === true &&
+        Number.isFinite(Number(pulseValidation.bpm)) &&
+        Number.isFinite(Number(pulseValidation.spo2)) &&
+        Number(pulseValidation.bpm) >= 40 &&
+        Number(pulseValidation.bpm) <= 200 &&
+        Number(pulseValidation.spo2) >= 70 &&
+        Number(pulseValidation.spo2) <= 100;
+
+      if (!isValid) {
+
+        console.warn(
+          '[QAMQOR BLE] Measurement rejected (no finger or invalid):',
+          bpm,
+          spo2
+        );
+
+        this.emitEmptyTelemetry('invalid');
+
+        return;
+      }
+
+      // =====================================
+      // VALID TELEMETRY
+      // =====================================
+
+      const now = Date.now();
+
       let ecgQuality = null;
-
-      if (typeof ecg === 'number') {
-        ecgQuality = checkECGSignalQuality(ecg, false);
+      let peakResult = null;
+      if (hasActiveECG) {
+        ecgQuality = checkECGSignalQuality(rawEcg, false);
         if (ecgQuality.isValid) {
-          peakResult = this.rPeakDetector.processSample(ecg, now);
+          peakResult = this.rPeakDetector.processSample(rawEcg, now);
         }
       }
 
-      // 4. Определение активности реальных датчиков
-      const hasActivePulse = pulseValidation && pulseValidation.isValid && pulseValidation.bpm > 0;
-      const hasActiveECG = typeof ecg === 'number' && ecg > 10 && ecg < 4085 && ecg !== 2048;
-      const hasValidSensors = hasActivePulse || hasActiveECG;
+      const telemetry = {
+
+        bpm: Number(pulseValidation.bpm),
+
+        spo2: Number(pulseValidation.spo2),
+
+        rawBpm: bpm,
+
+        rawSpO2: spo2,
+
+        ecg: hasActiveECG ? rawEcg : null,
+
+        ecgQuality: ecgQuality,
+
+        pulseValidation,
+
+        hasValidSensors: true,
+
+        hasActivePulse: true,
+
+        hasActiveECG: hasActiveECG,
+
+        rPeak: peakResult ? peakResult.peakDetected : false,
+
+        instantaneousBpm: peakResult ? peakResult.instantaneousBpm : null,
+
+        rrIntervals:
+          this.rPeakDetector.getValidRRIntervals(),
+
+        timestamp: now,
+
+        status: 'receiving'
+      };
+
+      this.lastValidMeasurement = telemetry;
+
+      this.isConnected = true;
+
+      this.updateStatus(
+        'connected_receiving',
+        'Получение реальных данных'
+      );
 
       if (this.onTelemetry) {
-        this.onTelemetry({
-          bpm: pulseValidation.isValid ? pulseValidation.bpm : null,
-          spo2: pulseValidation.isValid ? pulseValidation.spo2 : null,
-          rawBpm: bpm,
-          rawSpO2: spo2,
-          ecg: (hasActiveECG && typeof ecg === 'number') ? ecg : null,
-          pulseValidation,
-          ecgQuality,
-          hasValidSensors,
-          hasActivePulse,
-          hasActiveECG,
-          rPeak: peakResult ? peakResult.peakDetected : false,
-          instantaneousBpm: peakResult ? peakResult.instantaneousBpm : null,
-          rrIntervals: this.rPeakDetector.getValidRRIntervals(),
-          timestamp: now
-        });
+
+        this.onTelemetry(telemetry);
       }
-    } catch (err) {
-      console.warn('BLE Packet parse warning:', err);
+
+      console.log(
+        '[QAMQOR BLE] Valid telemetry:',
+        {
+          bpm: telemetry.bpm,
+          spo2: telemetry.spo2
+        }
+      );
+
+    } catch (error) {
+
+      console.error(
+        '[QAMQOR BLE] Packet processing error:',
+        error
+      );
+
+      if (this.onError) {
+        this.onError(error);
+      }
     }
+  }
+
+  // =========================================
+  // STATUS TEXT
+  // =========================================
+
+  getStatusText(status) {
+
+    const messages = {
+
+      receiving:
+        'Получение реальных данных',
+
+      calculating:
+        'Рассчитываются показатели',
+
+      no_finger:
+        'Приложите палец к датчику',
+
+      sensor_error:
+        'Ошибка датчика MAX30102',
+
+      initializing:
+        'Инициализация браслета',
+
+      invalid:
+        'Некорректные измерения'
+    };
+
+    return (
+      messages[status] ||
+      'Ожидание данных'
+    );
   }
 }
