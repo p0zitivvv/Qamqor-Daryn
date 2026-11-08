@@ -4,7 +4,7 @@
  * Реализация утвержденного обязательного модуля: расчет индекса Qamqor и персональные рекомендации
  */
 
-import { MODEL_CONFIG } from './config.js';
+import { MODEL_CONFIG, DeviceState } from './config.js';
 import {
   calculateLStat,
   calculateLDyn,
@@ -12,6 +12,11 @@ import {
   calculateBMI,
   validateSurvey
 } from './model.js';
+import {
+  calculateSDNN,
+  calculateRMSSD,
+  calculateRhythmIrregularity
+} from './signals.js';
 import {
   calculateDataQuality,
   calculateBaselineCompleteness,
@@ -35,6 +40,7 @@ export const App = {
     isConnected: false,
     deviceState: 'disconnected',         // 'disconnected' | 'connected_no_data' | 'connected_receiving' | 'connection_lost'
     deviceName: 'Qamqor Band',
+    dynamicsPeriod: '7d',
 
     // Текущие биометрические показатели (в реальном режиме по умолчанию null!)
     bpm: null,
@@ -268,19 +274,24 @@ export const App = {
     });
 
     try {
-      if (tabId === 'history') {
-        this.renderHistoryList();
-        this.renderRecommendationsTab();
+      if (tabId === 'home') {
+        this.renderDashboardMetrics();
+        if (this.ecgCanvas) {
+          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected, this.state.isDemo);
+        }
+      } else if (tabId === 'metrics') {
+        this.renderMyRiskTab();
+        if (this.ecgCanvas) {
+          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected, this.state.isDemo);
+        }
       } else if (tabId === 'factors') {
-        this.renderFactorsTab();
+        this.renderDynamicsTab();
+      } else if (tabId === 'history') {
+        this.renderAdvisorTab();
       } else if (tabId === 'guardian') {
         this.renderGuardianTab();
       } else if (tabId === 'settings') {
         this.populateSettingsTab();
-      } else if (tabId === 'home' || tabId === 'metrics') {
-        if (this.ecgCanvas) {
-          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected, this.state.isDemo);
-        }
       }
     } catch(err) {
       console.warn('Error rendering tab content:', tabId, err);
@@ -326,19 +337,24 @@ export const App = {
           timestamp: Date.now(),
           time: now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
           date: now.toLocaleDateString('ru-RU'),
+          timeStr: now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+          dateStr: now.toLocaleDateString('ru-RU'),
           bpm: this.state.bpm,
+          hr: this.state.bpm,
           spo2: this.state.spo2,
-          sdnn: this.state.sdnn != null ? Math.round(this.state.sdnn) : '—',
-          index: this.state.modelEvaluation ? this.state.modelEvaluation.index : '—',
+          sdnn: this.state.sdnn != null ? Math.round(this.state.sdnn) : null,
+          hrv: this.state.sdnn != null ? Math.round(this.state.sdnn) : null,
+          index: this.state.modelEvaluation ? this.state.modelEvaluation.index : null,
           zone: this.state.modelEvaluation ? this.state.modelEvaluation.zone : 'green',
-          source: 'Qamqor Band (MAX30102)'
+          source: 'Qamqor Band (MAX30102)',
+          isDemo: false
         };
         try {
-          const currentHist = StorageService.getHistory();
-          currentHist.unshift(histEntry);
-          if (currentHist.length > 500) currentHist.length = 500;
-          StorageService.saveHistory(currentHist);
+          StorageService.addHistoryEntry(histEntry, false);
           this.renderRecentMeasurementsTable();
+          if (this.state.activeTab === 'factors') {
+            this.renderDynamicsTab();
+          }
         } catch (saveErr) {
           console.warn('[Qamqor] Безопасная обработка сохранения истории:', saveErr);
         }
@@ -446,8 +462,10 @@ export const App = {
     this.demoSimulator.stop();
     this.state.isDemo = false;
     StorageService.setDemoMode(false);
-    // Очищаем биометрию только если нет активного подключения с поступающими данными
-    if (!this.state.isConnected || this.state.deviceState !== 'connected_receiving') {
+    if (this.aiAdvisorService) {
+      this.aiAdvisorService.resetCache();
+    }
+    if (!this.state.isConnected || (this.state.bpm == null && this.state.spo2 == null)) {
       this.clearBiometrics();
     }
     if (this.ecgCanvas) {
@@ -455,7 +473,7 @@ export const App = {
     }
     this.updateConnectionUI();
     this.recalculateModel();
-    this.renderDashboardMetrics();
+    this.renderAll();
     console.log('[Qamqor] Режим реального устройства активирован.');
   },
 
@@ -475,6 +493,12 @@ export const App = {
     this.state.isConnected = false;
     this.state.deviceState = 'disconnected';
     StorageService.setDemoMode(true);
+    if (this.bleService && this.bleService.isConnected) {
+      this.bleService.disconnect();
+    }
+    if (this.aiAdvisorService) {
+      this.aiAdvisorService.resetCache();
+    }
     this.updateConnectionUI();
 
     if (this.ecgCanvas) {
@@ -491,6 +515,7 @@ export const App = {
       }
       this.recalculateModel();
     });
+    this.renderAll();
     this.showToast('Демо-режим симулятора запущен.', 'info');
   },
 
@@ -700,8 +725,9 @@ export const App = {
   renderAll() {
     try { this.updateConnectionUI(); } catch(e) { console.warn('updateConnectionUI err:', e); }
     try { this.renderDashboardMetrics(); } catch(e) { console.warn('renderDashboardMetrics err:', e); }
-    try { this.renderFactorsTab(); } catch(e) { console.warn('renderFactorsTab err:', e); }
-    try { this.renderHistoryList(); } catch(e) { console.warn('renderHistoryList err:', e); }
+    try { this.renderMyRiskTab(); } catch(e) { console.warn('renderMyRiskTab err:', e); }
+    try { this.renderDynamicsTab(); } catch(e) { console.warn('renderDynamicsTab err:', e); }
+    try { this.renderAdvisorTab(); } catch(e) { console.warn('renderAdvisorTab err:', e); }
     try { this.populateSettingsTab(); } catch(e) { console.warn('populateSettingsTab err:', e); }
     try { this.renderGuardianTab(); } catch(e) { console.warn('renderGuardianTab err:', e); }
   },
@@ -711,188 +737,615 @@ export const App = {
     const lastSyncEl = document.getElementById('app-last-sync-time');
     if (lastSyncEl) lastSyncEl.textContent = `Синхр: ${timeStr}`;
 
-    // ЧСС и SpO2
+    // 1. Поток и частота в шапке
+    const streamHzEl = document.getElementById('home-stream-hz');
+    if (streamHzEl) {
+      if (this.state.isDemo) {
+        streamHzEl.textContent = 'DEMO 250 Гц • Симуляция';
+        streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200';
+      } else if (this.state.deviceState === 'connected_receiving') {
+        streamHzEl.textContent = 'LIVE 250 Гц • Поток активен';
+        streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200';
+      } else if (this.state.isConnected) {
+        streamHzEl.textContent = 'Отведение I • Ожидание сенсора';
+        streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200';
+      } else {
+        streamHzEl.textContent = 'Отведение I • Ожидание';
+        streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 text-slate-500';
+      }
+    }
+
+    // 2. Статус связи в карточке мониторинга
+    const devDot = document.getElementById('home-device-status-dot');
+    const devDesc = document.getElementById('home-device-status-desc');
+    if (devDot) {
+      devDot.className = this.state.isDemo 
+        ? 'w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse'
+        : (this.state.deviceState === 'connected_receiving' 
+            ? 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse' 
+            : (this.state.isConnected ? 'w-2.5 h-2.5 rounded-full bg-sky-500' : 'w-2.5 h-2.5 rounded-full bg-slate-300'));
+    }
+    if (devDesc) {
+      devDesc.textContent = this.state.isDemo
+        ? 'Генерация виртуальных биосигналов для тестирования'
+        : (this.state.deviceState === 'connected_receiving'
+            ? `Браслет ${this.state.deviceName || 'Qamqor_Band'} • Приём телеметрии активен`
+            : (this.state.isConnected 
+                ? 'Браслет подключён • Приложите палец к MAX30102' 
+                : 'Непрерывный замер биосигналов и контроль кардио-динамики'));
+    }
+
+    // 3. ЧСС (Пульс)
     const bpmVal = document.getElementById('home-metric-bpm-val');
+    const bpmStatus = document.getElementById('home-metric-bpm-status');
     if (bpmVal) {
       bpmVal.textContent = this.state.isDemo 
         ? (this.state.bpm || '72') 
         : (this.state.bpm != null ? this.state.bpm : '—');
     }
+    if (bpmStatus) {
+      bpmStatus.textContent = this.state.isDemo
+        ? 'Норма покоя (симуляция)'
+        : (this.state.bpm != null ? 'Телеметрия с датчика' : 'Ожидание измерений');
+      bpmStatus.className = (this.state.isDemo || this.state.bpm != null)
+        ? 'text-[10px] text-emerald-700 font-medium'
+        : 'text-[10px] text-slate-400 font-medium';
+    }
 
+    // 4. SpO2 (Кислород)
     const spo2Val = document.getElementById('home-metric-spo2-val');
+    const spo2Status = document.getElementById('home-metric-spo2-status');
     if (spo2Val) {
       spo2Val.textContent = this.state.isDemo 
         ? `${this.state.spo2 || 98}%` 
         : (this.state.spo2 != null ? `${this.state.spo2}%` : '—');
     }
-
-    // Проверка анкеты и качества данных c < 0.5
-    const isSurveyValid = this.state.surveyValidation ? this.state.surveyValidation.isValid : false;
-    const isQualitySufficient = this.state.isDemo || (this.state.qualityResult && this.state.qualityResult.c >= 0.5) || (!this.state.isDemo && this.state.bpm != null && this.state.spo2 != null);
-
-    const numEl = document.getElementById('home-index-number');
-    const barEl = document.getElementById('home-index-progress-bar');
-    const zoneEl = document.getElementById('home-index-zone-label');
-    const statusEl = document.getElementById('home-index-status-desc');
-
-    if (!isSurveyValid) {
-      if (numEl) numEl.innerHTML = '<span class="text-xl text-amber-600 font-bold">Анкета не завершена</span>';
-      if (barEl) {
-        barEl.style.width = '0%';
-        barEl.className = 'bg-slate-200 h-2.5 rounded-full';
-      }
-      if (zoneEl) {
-        zoneEl.textContent = 'Требуется завершить анкету';
-        zoneEl.className = 'text-xs font-bold text-amber-700';
-      }
-      if (statusEl) {
-        statusEl.innerHTML = '<button onclick="App.startSurveyWizard()" class="text-teal-700 font-semibold underline decoration-dotted hover:text-teal-800">Нажмите здесь, чтобы ответить на вопросы модели</button>';
-      }
-      this._updateGauge(null, 'none');
-    } else if (!this.state.isDemo && (this.state.bpm == null || this.state.spo2 == null)) {
-      // Реальный режим без активного контакта с датчиками
-      if (numEl) numEl.innerHTML = '<span class="text-3xl text-slate-400 font-extrabold">—</span>';
-      if (barEl) {
-        barEl.style.width = '0%';
-        barEl.className = 'bg-slate-200 h-2.5 rounded-full';
-      }
-      if (zoneEl) {
-        zoneEl.textContent = this.state.deviceState === 'connected_no_data' ? 'Ожидание измерений' : 'Устройство не подключено';
-        zoneEl.className = 'text-xs font-semibold text-slate-500';
-      }
-      if (statusEl) {
-        statusEl.textContent = this.state.deviceState === 'connected_no_data'
-          ? 'Браслет подключён по BLE. Закрепите браслет на запястье и коснитесь датчика MAX30102.'
-          : 'Подключите браслет Qamqor по Bluetooth для сбора телеметрии.';
-      }
-      this._updateGauge(null, 'none');
-    } else if (!isQualitySufficient) {
-      // ПРАВИЛО 1 & 6: При c < 0.5 не показывать число как достоверный результат
-      if (numEl) numEl.innerHTML = '<span class="text-2xl text-amber-600 font-bold">Недостаточно данных</span>';
-      if (barEl) {
-        barEl.style.width = '0%';
-        barEl.className = 'bg-slate-200 h-2.5 rounded-full';
-      }
-      if (zoneEl) {
-        zoneEl.textContent = 'Расчет приостановлен (c < 0.5)';
-        zoneEl.className = 'text-xs font-bold text-amber-700';
-      }
-      if (statusEl) {
-        statusEl.textContent = 'Проверьте контакт датчиков на запястье и повторите замер в покое.';
-      }
-      this._updateGauge(null, 'none');
-    } else if (this.state.modelEvaluation && this.state.modelEvaluation.index != null) {
-      // c >= 0.5: Отображение числа, цветовой зоны (0-19, 20-39, 40-100)
-      const idx = this.state.modelEvaluation.index;
-      const zone = this.state.modelEvaluation.zone;
-
-      if (numEl) numEl.textContent = idx;
-      if (barEl) {
-        barEl.style.width = `${Math.min(100, Math.max(6, idx))}%`;
-        barEl.className = zone === 'red' ? 'bg-gradient-to-r from-rose-500 to-red-600 h-2.5 rounded-full transition-all duration-500' :
-                          zone === 'yellow' ? 'bg-gradient-to-r from-amber-400 to-amber-500 h-2.5 rounded-full transition-all duration-500' :
-                          'bg-gradient-to-r from-emerald-400 to-teal-500 h-2.5 rounded-full transition-all duration-500';
-      }
-      if (zoneEl) {
-        zoneEl.textContent = zone === 'red' ? 'Красная зона (40–100: повышенная нагрузка)' :
-                             zone === 'yellow' ? 'Жёлтая зона (20–39: умеренное внимание)' :
-                             'Зелёная зона (0–19: нормальное состояние)';
-        zoneEl.className = zone === 'red' ? 'text-xs font-bold text-rose-600' :
-                           zone === 'yellow' ? 'text-xs font-bold text-amber-600' :
-                           'text-xs font-bold text-emerald-600';
-      }
-      if (statusEl) {
-        statusEl.textContent = zone === 'red' ? 'Рекомендуется отдых и снижение нагрузки' :
-                               zone === 'yellow' ? 'Небольшое отклонение от персонального оптимума' :
-                               'Физиологические показатели стабильны';
-      }
-      this._updateGauge(idx, zone);
+    if (spo2Status) {
+      spo2Status.textContent = this.state.isDemo
+        ? 'Физиологический оптимум'
+        : (this.state.spo2 != null ? (this.state.spo2 >= 95 ? 'Оптимальная сатурация' : 'Снижение SpO2') : 'Ожидание сатурации');
+      spo2Status.className = (this.state.isDemo || this.state.spo2 != null)
+        ? (this.state.spo2 != null && this.state.spo2 < 95 ? 'text-[10px] text-amber-600 font-medium' : 'text-[10px] text-emerald-700 font-medium')
+        : 'text-[10px] text-slate-400 font-medium';
     }
 
-    // Быстрый совет на главном экране из Recommendation Engine
-    const quickTipEl = document.getElementById('home-quick-advice-text');
-    if (quickTipEl) {
-      if (this.state.recommendations.length > 0) {
-        const topRec = this.state.recommendations[0];
-        quickTipEl.innerHTML = `<b>${topRec.title}:</b> ${topRec.action}`;
-      } else if (!this.state.isDemo && this.state.bpm == null) {
-        quickTipEl.textContent = 'Ожидание измерений браслета для формирования индивидуальных рекомендаций.';
-      } else {
-        quickTipEl.textContent = 'Показатели стабильны. Поддерживайте водный баланс и регулярно проветривайте помещение.';
-      }
-    }
-
-    // Дополнительные селекторы для вкладки Мониторинг и Мой риск
-    const mBpm = document.getElementById('metric-bpm');
-    if (mBpm) {
-      mBpm.textContent = this.state.isDemo 
-        ? (this.state.bpm || '72') 
-        : (this.state.bpm != null ? this.state.bpm : '—');
-    }
-    const mSpo2 = document.getElementById('metric-spo2');
-    if (mSpo2) {
-      mSpo2.textContent = this.state.isDemo 
-        ? `${this.state.spo2 || 98}%` 
-        : (this.state.spo2 != null ? `${this.state.spo2}%` : '—');
-    }
+    // 5. HRV (SDNN)
     const mSdnn = document.getElementById('metric-sdnn');
+    const sdnnStatus = document.getElementById('home-metric-sdnn-status');
     if (mSdnn) {
       mSdnn.textContent = this.state.isDemo 
         ? Math.round(this.state.sdnn || 48) 
         : (this.state.sdnn != null ? Math.round(this.state.sdnn) : '—');
     }
-    const mRiskVal = document.getElementById('risk-index-value');
-    if (mRiskVal) {
+    if (sdnnStatus) {
+      sdnnStatus.textContent = this.state.isDemo
+        ? 'Вегетативный баланс'
+        : (this.state.sdnn != null ? 'Вариабельность ритма' : 'Ожидание замеров');
+      sdnnStatus.className = (this.state.isDemo || this.state.sdnn != null)
+        ? 'text-[10px] text-teal-700 font-medium'
+        : 'text-[10px] text-slate-400 font-medium';
+    }
+
+    // 6. Осциллограф статус-пилл
+    const homeEcgPill = document.getElementById('home-ecg-status-pill');
+    const homeEcgDot = document.getElementById('home-ecg-live-dot');
+    const homeEcgEmpty = document.getElementById('home-ecg-empty-state');
+    if (homeEcgPill) {
       if (this.state.isDemo) {
-        mRiskVal.textContent = (this.state.modelEvaluation && this.state.modelEvaluation.index != null) ? this.state.modelEvaluation.index : '18';
+        homeEcgPill.textContent = 'DEMO 250 Гц';
+        homeEcgPill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-mono font-medium';
+      } else if (this.state.deviceState === 'connected_receiving') {
+        homeEcgPill.textContent = 'LIVE 250 Гц';
+        homeEcgPill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-medium';
       } else {
-        mRiskVal.textContent = (this.state.modelEvaluation && this.state.modelEvaluation.index != null) ? this.state.modelEvaluation.index : '—';
+        homeEcgPill.textContent = 'Ожидание';
+        homeEcgPill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-mono font-medium';
+      }
+    }
+    if (homeEcgDot) {
+      homeEcgDot.className = (this.state.isDemo || this.state.deviceState === 'connected_receiving')
+        ? 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse'
+        : 'w-2.5 h-2.5 rounded-full bg-slate-300';
+    }
+    if (homeEcgEmpty) {
+      if (this.state.isDemo || this.state.deviceState === 'connected_receiving') {
+        homeEcgEmpty.classList.add('hidden');
+      } else {
+        homeEcgEmpty.classList.remove('hidden');
       }
     }
 
+    // 7. Скрытые селекторы совместимости
+    const mBpm = document.getElementById('metric-bpm');
+    if (mBpm) mBpm.textContent = bpmVal ? bpmVal.textContent : '—';
+    const mSpo2 = document.getElementById('metric-spo2');
+    if (mSpo2) mSpo2.textContent = spo2Val ? spo2Val.textContent : '—';
+
+    // 8. Обновление таблицы недавних замеров на главном экране
     this.renderRecentMeasurementsTable();
+  },
 
-    // Полнота данных (c)
-    if (this.state.qualityResult) {
-      const qPctEl = document.getElementById('home-quality-percent');
-      const qBarEl = document.getElementById('home-quality-bar');
-      const qDescEl = document.getElementById('home-quality-desc');
+  // ========================================================
+  // ВКЛАДКА 02: МОЙ РИСК (ИНДИВИДУАЛЬНАЯ МАТЕМАТИЧЕСКАЯ МОДЕЛЬ)
+  // ========================================================
+  renderMyRiskTab() {
+    const evalRes = this.state.modelEvaluation;
+    const profile = StorageService.getProfile() || (this.state.isDemo ? StorageService.getDefaultDemoProfile() : {});
+    const stat = this.state.lStatResult;
+    const dyn = this.state.lDynResult;
+    const baseline = this.baselineService ? this.baselineService.getBaseline() : { hr0: 70 };
 
-      const pct = this.state.isDemo ? 88 : this.state.qualityResult.percentage;
-      if (qPctEl) qPctEl.textContent = `${pct}%`;
-      if (qBarEl) qBarEl.style.width = `${pct}%`;
-      if (qDescEl) qDescEl.textContent = this.state.isDemo ? 'Демонстрационные данные' : this.state.qualityResult.label;
+    const numEl = document.getElementById('home-index-number');
+    const riskValEl = document.getElementById('risk-index-value');
+    const zoneEl = document.getElementById('home-index-zone-label');
+    const descEl = document.getElementById('home-index-status-desc');
+
+    const hasRealData = !this.state.isDemo && this.state.bpm != null && this.state.spo2 != null;
+    const isReady = this.state.isDemo || hasRealData;
+
+    if (!isReady || !evalRes || evalRes.index == null) {
+      if (numEl) numEl.textContent = '—';
+      if (riskValEl) riskValEl.textContent = '—';
+      if (zoneEl) {
+        zoneEl.textContent = this.state.deviceState === 'connected_no_data' ? 'Ожидание контакта с датчиком' : 'Устройство не подключено';
+        zoneEl.className = 'text-xs font-semibold text-slate-500';
+      }
+      if (descEl) {
+        descEl.textContent = 'Для расчета индивидуального риска наденьте браслет Qamqor_Band и коснитесь оптического сенсора MAX30102.';
+      }
+      this._updateGauge(null, 'none');
+    } else {
+      const idx = evalRes.index;
+      const zone = evalRes.zone;
+      if (numEl) numEl.textContent = idx;
+      if (riskValEl) riskValEl.textContent = idx;
+      if (zoneEl) {
+        zoneEl.textContent = zone === 'red' ? 'Красная зона (Повышенный риск)' :
+                             zone === 'yellow' ? 'Жёлтая зона (Умеренное внимание)' :
+                             'Зелёная зона (Низкий риск)';
+        zoneEl.className = zone === 'red' ? 'text-xs font-bold text-rose-600' :
+                           zone === 'yellow' ? 'text-xs font-bold text-amber-600' :
+                           'text-xs font-bold text-emerald-600';
+      }
+      if (descEl) {
+        descEl.textContent = zone === 'red' ? 'Рекомендуется отдых и снижение нагрузки. Контролируйте пульс и дыхание.' :
+                             zone === 'yellow' ? 'Небольшое отклонение от персонального оптимума. Обратите внимание на стресс.' :
+                             'Физиологические показатели стабильны и находятся в пределах персонализированной нормы.';
+      }
+      this._updateGauge(idx, zone);
     }
 
-    // Базовая линия
-    const baseDescEl = document.getElementById('home-baseline-status-desc');
-    if (baseDescEl) {
-      baseDescEl.textContent = this.state.isDemo 
-        ? 'Демо-калибровка активна (норма пульса: 70 уд/мин, SDNN: 48 мс)' 
-        : this.baselineService.getStatusText();
+    // Статические факторы L_stat
+    const ageEl = document.getElementById('risk-factor-age');
+    if (ageEl) {
+      const aVal = stat && stat.a != null ? stat.a.toFixed(2) : '0.00';
+      ageEl.textContent = profile.age ? `${profile.age} лет • Вектор A = ${aVal}` : '40 лет • Вектор A = 0.00';
+    }
+
+    const bmiEl = document.getElementById('risk-factor-bmi');
+    if (bmiEl) {
+      const bVal = stat && stat.b != null ? stat.b.toFixed(2) : '0.00';
+      const bmiVal = profile.bmi || (profile.height && profile.weight ? (profile.weight / ((profile.height/100)**2)).toFixed(1) : 24.5);
+      const bmiCat = stat && stat.bmiCategory ? stat.bmiCategory : 'Норма';
+      bmiEl.textContent = `${bmiVal} кг/м² (${bmiCat}) • B = ${bVal}`;
+    }
+
+    const smokingEl = document.getElementById('risk-factor-smoking');
+    if (smokingEl) {
+      const isSmoker = profile.smoking === true || profile.smoking === 'current' || profile.smoking === 1;
+      smokingEl.textContent = isSmoker ? 'Курит (S = 1.0)' : 'Не курит (S = 0.0)';
+      smokingEl.className = isSmoker ? 'font-semibold text-rose-600' : 'font-semibold text-emerald-700';
+    }
+
+    const famEl = document.getElementById('risk-factor-family');
+    if (famEl) {
+      const hasFam = profile.familyHistory === true || profile.familyHistory === 1;
+      famEl.textContent = hasFam ? 'Отягощен ранними ССЗ (F = 1.0)' : 'Без ранних ССЗ (F = 0.0)';
+      famEl.className = hasFam ? 'font-semibold text-amber-600' : 'font-semibold text-slate-800';
+    }
+
+    const actEl = document.getElementById('risk-factor-activity');
+    if (actEl) {
+      actEl.textContent = `Стресс: ${profile.stressLevel || 'умеренный'}, Активность: ${profile.physicalActivity || 'умеренная'}`;
+    }
+
+    // Динамические биомаркеры L_dyn
+    const dHrEl = document.getElementById('risk-factor-delta-hr');
+    if (dHrEl) {
+      if (!isReady || this.state.bpm == null) {
+        dHrEl.textContent = '— (Ожидание пульса)';
+        dHrEl.className = 'font-semibold text-slate-400 font-mono';
+      } else {
+        const delta = this.state.bpm - (baseline.hr0 || 70);
+        dHrEl.textContent = `${delta >= 0 ? '+' : ''}${delta} уд/мин (Базовый: ${baseline.hr0 || 70})`;
+        dHrEl.className = Math.abs(delta) > 15 ? 'font-semibold text-amber-600 font-mono' : 'font-semibold text-emerald-700 font-mono';
+      }
+    }
+
+    const zHrvEl = document.getElementById('risk-factor-z-hrv');
+    if (zHrvEl) {
+      if (!isReady || this.state.sdnn == null) {
+        zHrvEl.textContent = '— (Ожидание HRV)';
+        zHrvEl.className = 'font-semibold text-slate-400 font-mono';
+      } else {
+        const z = dyn && dyn.zHrv != null ? dyn.zHrv : 0;
+        zHrvEl.textContent = `${z.toFixed(2)} σ (SDNN: ${Math.round(this.state.sdnn)} мс)`;
+        zHrvEl.className = z > 1.5 ? 'font-semibold text-amber-600 font-mono' : 'font-semibold text-emerald-700 font-mono';
+      }
+    }
+
+    const sSpo2El = document.getElementById('risk-factor-spo2');
+    if (sSpo2El) {
+      if (!isReady || this.state.spo2 == null) {
+        sSpo2El.textContent = '— (Ожидание SpO2)';
+        sSpo2El.className = 'font-semibold text-slate-400 font-mono';
+      } else {
+        const s = dyn && dyn.sSpo2 != null ? dyn.sSpo2 : (this.state.spo2 < 92 ? 3 : this.state.spo2 < 94 ? 2 : this.state.spo2 < 96 ? 1 : 0);
+        sSpo2El.textContent = `${s} баллов (NEWS2, SpO2: ${this.state.spo2}%)`;
+        sSpo2El.className = s > 0 ? 'font-semibold text-amber-600 font-mono' : 'font-semibold text-teal-700 font-mono';
+      }
+    }
+
+    const sArrEl = document.getElementById('risk-factor-arr');
+    if (sArrEl) {
+      if (!isReady) {
+        sArrEl.textContent = '— (Ожидание ЭКГ)';
+        sArrEl.className = 'font-semibold text-slate-400 font-mono';
+      } else {
+        const p = this.state.pIrr != null ? this.state.pIrr : 0;
+        sArrEl.textContent = `${p.toFixed(2)} (${p > 0.3 ? 'Аритмия' : 'Регулярный ритм'})`;
+        sArrEl.className = p > 0.3 ? 'font-semibold text-rose-600 font-mono' : 'font-semibold text-emerald-700 font-mono';
+      }
+    }
+
+    const ecgPill = document.getElementById('ecg-status-pill');
+    if (ecgPill) {
+      if (this.state.isDemo) {
+        ecgPill.textContent = 'DEMO 250 Гц';
+        ecgPill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-mono font-medium';
+      } else if (this.state.deviceState === 'connected_receiving') {
+        ecgPill.textContent = 'LIVE 250 Гц';
+        ecgPill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-teal-50 text-teal-800 border border-teal-200 font-mono font-medium';
+      } else {
+        ecgPill.textContent = 'Ожидание';
+        ecgPill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-mono font-medium';
+      }
     }
   },
 
   // ========================================================
-  // ВКЛАДКА "СОВЕТЫ И ОБЪЯСНЕНИЕ РАСЧЕТА" (QAMQOR AI ADVISOR)
+  // ВКЛАДКА 03: ДИНАМИКА И ТРЕНДЫ (ГРАФИКИ И ЖУРНАЛ ИЗ STORAGE)
   // ========================================================
-  renderFactorsTab() {
-    const container = document.getElementById('factors-decomposition-container');
+  setDynamicsPeriod(period) {
+    if (!['day', '7d', '30d'].includes(period)) period = '7d';
+    this.state.dynamicsPeriod = period;
+    this.renderDynamicsTab();
+  },
+
+  renderDynamicsTab() {
+    const isDemo = Boolean(this.state.isDemo);
+    const history = StorageService.getHistory(isDemo);
+    const period = this.state.dynamicsPeriod || '7d';
+
+    // Update active period buttons
+    ['day', '7d', '30d'].forEach(p => {
+      const btn = document.getElementById(`btn-period-${p}`);
+      if (btn) {
+        if (p === period) {
+          btn.className = 'px-3 py-1 rounded-lg bg-white text-teal-800 shadow-xs border border-slate-200 transition font-bold';
+        } else {
+          btn.className = 'px-3 py-1 rounded-lg text-slate-600 hover:text-slate-900 transition font-normal';
+        }
+      }
+    });
+
+    const periodLabelEl = document.getElementById('dyn-stat-period-label');
+    if (periodLabelEl) {
+      periodLabelEl.textContent = period === 'day' ? 'За последние 24 часа' : period === '30d' ? 'За последние 30 дней' : 'За последние 7 дней';
+    }
+
+    // Time filter
+    const now = Date.now();
+    const periodMs = period === 'day' ? 24 * 3600 * 1000 : period === '30d' ? 30 * 24 * 3600 * 1000 : 7 * 24 * 3600 * 1000;
+    const cutoff = now - periodMs;
+
+    let filtered = history.filter(item => {
+      if (item.timestamp && typeof item.timestamp === 'number') {
+        return item.timestamp >= cutoff;
+      }
+      return true;
+    });
+
+    // Sort chronologically (oldest to newest) for chart plotting
+    filtered.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+
+    const emptyBox = document.getElementById('dyn-empty-state');
+    const chartsBox = document.getElementById('dyn-charts-container');
+    const statCount = document.getElementById('dyn-stat-count');
+    const statHrRange = document.getElementById('dyn-stat-hr-range');
+    const statSpo2Avg = document.getElementById('dyn-stat-spo2-avg');
+    const statHrvAvg = document.getElementById('dyn-stat-hrv-avg');
+    const tableContainer = document.getElementById('dyn-history-table-container');
+
+    if (filtered.length === 0) {
+      if (emptyBox) emptyBox.classList.remove('hidden');
+      if (chartsBox) chartsBox.classList.add('hidden');
+      if (statCount) statCount.textContent = '0';
+      if (statHrRange) statHrRange.textContent = '—';
+      if (statSpo2Avg) statSpo2Avg.textContent = '—';
+      if (statHrvAvg) statHrvAvg.textContent = '—';
+      if (tableContainer) {
+        tableContainer.innerHTML = `
+          <div class="p-8 text-center text-xs text-slate-400">
+            <div class="flex flex-col items-center justify-center space-y-1">
+              <span>📡 Нет сохранённых записей за выбранный период</span>
+              <span class="text-[11px] text-slate-500">${isDemo ? 'Переключите сценарий симуляции или сбросьте фильтр.' : 'Подключите браслет Qamqor_Band по Bluetooth и зафиксируйте замеры.'}</span>
+            </div>
+          </div>
+        `;
+      }
+      return;
+    }
+
+    if (emptyBox) emptyBox.classList.add('hidden');
+    if (chartsBox) chartsBox.classList.remove('hidden');
+
+    const validHrs = filtered.map(p => p.bpm != null ? p.bpm : p.hr).filter(v => typeof v === 'number' && v > 0);
+    const validSpo2s = filtered.map(p => p.spo2).filter(v => typeof v === 'number' && v > 0);
+    const validSdnns = filtered.map(p => p.sdnn != null ? p.sdnn : p.hrv).filter(v => typeof v === 'number' && v > 0);
+
+    const minHr = validHrs.length > 0 ? Math.min(...validHrs) : '—';
+    const maxHr = validHrs.length > 0 ? Math.max(...validHrs) : '—';
+    const avgHr = validHrs.length > 0 ? Math.round(validHrs.reduce((a, b) => a + b, 0) / validHrs.length) : '—';
+
+    const avgSpo2 = validSpo2s.length > 0 ? (validSpo2s.reduce((a, b) => a + b, 0) / validSpo2s.length).toFixed(1) : '—';
+    const avgSdnn = validSdnns.length > 0 ? Math.round(validSdnns.reduce((a, b) => a + b, 0) / validSdnns.length) : '—';
+
+    if (statCount) statCount.textContent = `${filtered.length} замеров`;
+    if (statHrRange) statHrRange.textContent = validHrs.length > 0 ? `${minHr} / ${avgHr} / ${maxHr} уд/м` : '—';
+    if (statSpo2Avg) statSpo2Avg.textContent = validSpo2s.length > 0 ? `${avgSpo2}%` : '—';
+    if (statHrvAvg) statHrvAvg.textContent = validSdnns.length > 0 ? `${avgSdnn} мс` : '—';
+
+    const baseline = this.baselineService ? this.baselineService.getBaseline() : { hr0: 70 };
+    const hr0 = baseline.hr0 || 70;
+
+    const hrBadge = document.getElementById('dyn-chart-hr-badge');
+    if (hrBadge) hrBadge.textContent = `Базовый: ${hr0} уд/м`;
+
+    // Render 3 dynamic SVGs from Storage data
+    this.renderDynamicChartSVG('dyn-chart-hr-box', filtered, p => p.bpm != null ? p.bpm : p.hr, {
+      yMin: Math.min(50, typeof minHr === 'number' ? minHr - 5 : 50),
+      yMax: Math.max(120, typeof maxHr === 'number' ? maxHr + 10 : 120),
+      refLines: [{ y: hr0, label: `Базовый ${hr0}`, color: '#0F766E', dash: true }],
+      strokeColor: '#0F766E',
+      fillColor: 'rgba(15, 118, 110, 0.12)',
+      unit: ' уд/мин'
+    });
+
+    this.renderDynamicChartSVG('dyn-chart-spo2-box', filtered, p => p.spo2, {
+      yMin: 85,
+      yMax: 100,
+      refLines: [{ y: 95, label: 'Порог 95%', color: '#059669', dash: true }],
+      shadingBands: [{ yMin: 95, yMax: 100, color: 'rgba(5, 150, 105, 0.08)' }],
+      strokeColor: '#0284C7',
+      fillColor: 'rgba(2, 132, 199, 0.12)',
+      unit: '%'
+    });
+
+    this.renderDynamicChartSVG('dyn-chart-hrv-box', filtered, p => p.sdnn != null ? p.sdnn : p.hrv, {
+      yMin: 15,
+      yMax: 90,
+      shadingBands: [{ yMin: 35, yMax: 65, color: 'rgba(100, 116, 139, 0.08)' }],
+      refLines: [
+        { y: 35, label: 'Нижняя норма (35 мс)', color: '#94A3B8', dash: true },
+        { y: 65, label: 'Верхняя норма (65 мс)', color: '#94A3B8', dash: true }
+      ],
+      strokeColor: '#6366F1',
+      fillColor: 'rgba(99, 102, 241, 0.12)',
+      unit: ' мс'
+    });
+
+    // Render Measurement Table
+    if (tableContainer) {
+      const displayRows = filtered.slice().reverse().slice(0, 15);
+      tableContainer.innerHTML = `
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs text-left">
+            <thead>
+              <tr class="border-b border-slate-200 text-[10px] font-mono text-slate-400 uppercase tracking-wider">
+                <th class="py-2.5 px-3">Дата / Время</th>
+                <th class="py-2.5 px-3">ЧСС</th>
+                <th class="py-2.5 px-3">SpO₂</th>
+                <th class="py-2.5 px-3">HRV (SDNN)</th>
+                <th class="py-2.5 px-3">Индекс риска</th>
+                <th class="py-2.5 px-3 text-right">Источник</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${displayRows.map(row => {
+                const bpm = row.bpm != null ? row.bpm : (row.hr != null ? row.hr : '—');
+                const spo2 = row.spo2 != null ? `${row.spo2}%` : '—';
+                const sdnn = row.sdnn != null ? `${Math.round(row.sdnn)} мс` : (row.hrv != null ? `${Math.round(row.hrv)} мс` : '—');
+                const idx = row.index != null ? row.index : '—';
+                const zone = row.zone || 'green';
+                const badgeClass = zone === 'red' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                                   zone === 'yellow' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                   'bg-emerald-50 text-emerald-700 border-emerald-200';
+                const isItemDemo = row.isDemo || row.source === 'demo' || (row.source && row.source.toLowerCase().includes('demo'));
+                return `
+                  <tr class="border-b border-slate-100 hover:bg-slate-50/70 transition">
+                    <td class="py-2.5 px-3 font-mono text-slate-500">${row.dateStr || row.date || ''} ${row.timeStr || row.time || ''}</td>
+                    <td class="py-2.5 px-3 font-semibold text-slate-800 font-mono">${bpm} <span class="text-[10px] text-slate-400 font-sans">уд/м</span></td>
+                    <td class="py-2.5 px-3 font-semibold text-slate-800 font-mono">${spo2}</td>
+                    <td class="py-2.5 px-3 font-mono text-slate-600">${sdnn}</td>
+                    <td class="py-2.5 px-3 font-mono">
+                      <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border ${badgeClass}">
+                        ${idx}
+                      </span>
+                    </td>
+                    <td class="py-2.5 px-3 text-right">
+                      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${isItemDemo ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-teal-50 text-teal-700 border border-teal-200'}">
+                        ${isItemDemo ? 'DEMO' : 'ESP32'}
+                      </span>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+  },
+
+  renderDynamicChartSVG(containerId, items, valueExtractor, options = {}) {
+    const container = document.getElementById(containerId);
     if (!container) return;
 
-    const evalRes = this.state.modelEvaluation || { index: 18, zone: 'green' };
+    const dataPoints = items.map((item, idx) => {
+      const val = valueExtractor(item);
+      const timeLabel = item.timeStr || item.time || (item.timestamp ? new Date(item.timestamp).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : `#${idx+1}`);
+      return { val, label: timeLabel };
+    }).filter(p => typeof p.val === 'number' && !isNaN(p.val));
+
+    if (dataPoints.length === 0) {
+      container.innerHTML = `<div class="w-full h-full flex items-center justify-center text-xs text-slate-400 font-mono">Нет валидных точек</div>`;
+      return;
+    }
+
+    const w = 600;
+    const h = 160;
+    const padL = 40;
+    const padR = 20;
+    const padT = 16;
+    const padB = 26;
+    const plotW = w - padL - padR;
+    const plotH = h - padT - padB;
+
+    let minY = options.yMin != null ? options.yMin : Math.min(...dataPoints.map(p => p.val));
+    let maxY = options.yMax != null ? options.yMax : Math.max(...dataPoints.map(p => p.val));
+    if (minY === maxY) { minY -= 5; maxY += 5; }
+    const ySpan = maxY - minY;
+
+    const getX = (idx) => padL + (dataPoints.length > 1 ? (idx / (dataPoints.length - 1)) * plotW : plotW / 2);
+    const getY = (val) => padT + plotH - ((val - minY) / ySpan) * plotH;
+
+    let svgContent = '';
+
+    // Shading bands
+    if (options.shadingBands) {
+      options.shadingBands.forEach(band => {
+        const yTop = Math.max(padT, getY(band.yMax));
+        const yBottom = Math.min(padT + plotH, getY(band.yMin));
+        const bandH = Math.max(0, yBottom - yTop);
+        svgContent += `<rect x="${padL}" y="${yTop}" width="${plotW}" height="${bandH}" fill="${band.color}" />`;
+      });
+    }
+
+    // Horizontal grid lines
+    [0, 0.5, 1].forEach(ratio => {
+      const yVal = minY + ySpan * ratio;
+      const yPos = getY(yVal);
+      svgContent += `
+        <line x1="${padL}" y1="${yPos}" x2="${w - padR}" y2="${yPos}" stroke="#F1F5F9" stroke-width="1" />
+        <text x="${padL - 6}" y="${yPos + 3}" text-anchor="end" font-size="9" fill="#94A3B8" font-family="JetBrains Mono, monospace">${Math.round(yVal)}</text>
+      `;
+    });
+
+    // Reference lines
+    if (options.refLines) {
+      options.refLines.forEach(ref => {
+        const yPos = getY(ref.y);
+        if (yPos >= padT && yPos <= padT + plotH) {
+          svgContent += `
+            <line x1="${padL}" y1="${yPos}" x2="${w - padR}" y2="${yPos}" stroke="${ref.color}" stroke-width="1.2" stroke-dasharray="4 3" />
+            <text x="${w - padR}" y="${yPos - 4}" text-anchor="end" font-size="8" font-weight="600" fill="${ref.color}" font-family="JetBrains Mono, monospace">${ref.label}</text>
+          `;
+        }
+      });
+    }
+
+    // Path points
+    const pointsStr = dataPoints.map((p, idx) => `${getX(idx)},${getY(p.val)}`).join(' ');
+    const firstX = getX(0);
+    const lastX = getX(dataPoints.length - 1);
+    const baseY = padT + plotH;
+
+    // Fill area
+    if (dataPoints.length > 1) {
+      const areaPath = `M ${firstX},${baseY} L ` + dataPoints.map((p, idx) => `${getX(idx)},${getY(p.val)}`).join(' L ') + ` L ${lastX},${baseY} Z`;
+      svgContent += `<path d="${areaPath}" fill="${options.fillColor || 'rgba(15,118,110,0.1)'}" />`;
+      svgContent += `<polyline fill="none" stroke="${options.strokeColor || '#0F766E'}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${pointsStr}" />`;
+    }
+
+    // Circles
+    dataPoints.forEach((p, idx) => {
+      const cx = getX(idx);
+      const cy = getY(p.val);
+      svgContent += `<circle cx="${cx}" cy="${cy}" r="3.5" fill="#FFFFFF" stroke="${options.strokeColor || '#0F766E'}" stroke-width="2" />`;
+    });
+
+    // X Axis labels
+    const labelStep = Math.max(1, Math.floor(dataPoints.length / 4));
+    dataPoints.forEach((p, idx) => {
+      if (idx === 0 || idx === dataPoints.length - 1 || idx % labelStep === 0) {
+        const cx = getX(idx);
+        svgContent += `<text x="${cx}" y="${h - 8}" text-anchor="middle" font-size="8" fill="#94A3B8" font-family="JetBrains Mono, monospace">${p.label}</text>`;
+      }
+    });
+
+    container.innerHTML = `
+      <svg viewBox="0 0 ${w} ${h}" class="w-full h-full block overflow-visible">
+        ${svgContent}
+      </svg>
+    `;
+  },
+
+  // ========================================================
+  // ВКЛАДКА 04: AI ADVISOR (СОВЕТЫ И РЕКОМЕНДАЦИИ)
+  // ========================================================
+  renderFactorsTab() {
+    this.renderAdvisorTab();
+  },
+
+  renderAdvisorTab() {
+    const container = document.getElementById('advisor-content-container') || document.getElementById('factors-decomposition-container');
+    if (!container) return;
+
+    const isRealDevice = !this.state.isDemo;
+    const isDemo = Boolean(this.state.isDemo);
+
+    // В реальном режиме без сенсоров показываем честное ожидание
+    if (isRealDevice && this.state.bpm == null) {
+      container.innerHTML = `
+        <div class="rounded-2xl p-6 bg-white border border-slate-200 shadow-sm space-y-4 text-center">
+          <div class="w-12 h-12 mx-auto rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center text-xl text-teal-700">
+            📡
+          </div>
+          <div class="space-y-1">
+            <div class="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 text-[10px] font-bold">
+              <span>AI REAL DATA ANALYSIS</span>
+            </div>
+            <h3 class="text-sm font-bold text-slate-900">Ожидание телеметрии браслета</h3>
+            <p class="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
+              В реальном режиме Qamqor AI Advisor анализирует исключительно фактические показатели с датчиков MAX30102 и AD8232. Подключите браслет по Bluetooth и коснитесь оптического сенсора для формирования анализа.
+            </p>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const evalRes = this.state.modelEvaluation || (isDemo ? { index: 18, zone: 'green' } : { index: null, zone: 'none' });
     const stat = this.state.lStatResult;
     const baseline = this.baselineService ? this.baselineService.getBaseline() : { hr0: 70 };
     const q = this.state.qualityResult || { c: 0.88, percentage: 88 };
-    const history = StorageService.getHistory();
+    const history = StorageService.getHistory(isDemo);
 
-    // Получаем текущие данные для AI Advisor
     const currentHr = this.state.bpm;
     const currentSpo2 = this.state.spo2;
     const currentSdnn = this.state.sdnn;
-    const isRealDevice = !this.state.isDemo;
 
-    // Контекст для генерации/синтеза
     const advisorContext = {
       metrics: {
         hr: currentHr,
@@ -904,10 +1357,10 @@ export const App = {
       profile: StorageService.getProfile() || {},
       symptoms: this.state.symptoms || {},
       isDemo: this.state.isDemo,
+      modelResult: evalRes,
       history
     };
 
-    // Если кеша ещё нет — выполняем первичный локальный синтез
     let advisorData = this.aiAdvisorService ? this.aiAdvisorService.cachedResult : null;
     if (!advisorData && this.aiAdvisorService) {
       advisorData = this.aiAdvisorService.synthesizeLocalInsight(advisorContext);
@@ -954,8 +1407,8 @@ export const App = {
             <div>
               <div class="flex items-center space-x-2">
                 <h3 class="text-sm font-bold ${isEmergency || isAttention ? 'text-slate-900' : 'text-white'}">Qamqor AI Advisor</h3>
-                <span class="text-[10px] font-semibold px-2 py-0.5 rounded-full ${isRealDevice ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30' : 'bg-amber-400/20 text-amber-300 border border-amber-400/30'}">
-                  ${isRealDevice ? '● Реальные данные (ESP32)' : '○ Демо-режим'}
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${isRealDevice ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30' : 'bg-amber-400/20 text-amber-300 border border-amber-400/30'}">
+                  ${isRealDevice ? 'AI REAL DATA ANALYSIS' : 'AI DEMO ANALYSIS'}
                 </span>
               </div>
               <p class="text-[11px] ${isEmergency || isAttention ? 'text-slate-600' : 'text-teal-200/80'}">
@@ -1002,59 +1455,7 @@ export const App = {
         </div>
       </div>
 
-      <!-- 2. ДИНАМИКА И ТРЕНДЫ ПОКАЗАТЕЛЕЙ (TREND CHIPS) -->
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
-          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">ЧСС / Базовый</div>
-          <div class="flex items-baseline space-x-1.5">
-            <span class="text-base font-extrabold text-slate-900">${currentHr != null ? currentHr : (isRealDevice ? '—' : 72)}</span>
-            <span class="text-[11px] font-mono ${hrDelta > 10 ? 'text-amber-600 font-bold' : 'text-slate-500'}">
-              (${hrDelta > 0 ? '+' + hrDelta : hrDelta} к норме)
-            </span>
-          </div>
-          <div class="text-[10px] text-slate-500">Норма: ${baseline.hr0 || 70} уд/мин</div>
-        </div>
-
-        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
-          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Кислород SpO₂</div>
-          <div class="flex items-baseline space-x-1.5">
-            <span class="text-base font-extrabold ${currentSpo2 && currentSpo2 < 95 ? 'text-amber-600' : 'text-slate-900'}">
-              ${currentSpo2 != null ? currentSpo2 + '%' : (isRealDevice ? '—' : '98%')}
-            </span>
-            <span class="text-[10px] text-emerald-600 font-semibold">
-              ${currentSpo2 && currentSpo2 >= 95 ? 'Оптимум' : currentSpo2 ? 'Внимание' : ''}
-            </span>
-          </div>
-          <div class="text-[10px] text-slate-500">Целевой: 95–100%</div>
-        </div>
-
-        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
-          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Вариабельность HRV</div>
-          <div class="flex items-baseline space-x-1.5">
-            <span class="text-base font-extrabold text-slate-900">
-              ${currentSdnn != null ? Math.round(currentSdnn) + ' мс' : (isRealDevice ? '—' : '48 мс')}
-            </span>
-          </div>
-          <div class="text-[10px] text-slate-500">
-            ${currentSdnn && currentSdnn < 30 ? 'Снижен тонус' : 'Вегетативный баланс'}
-          </div>
-        </div>
-
-        <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1">
-          <div class="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">Кардио-нагрузка</div>
-          <div class="flex items-baseline space-x-1.5">
-            <span class="text-base font-extrabold ${evalRes.zone === 'red' ? 'text-rose-600' : evalRes.zone === 'yellow' ? 'text-amber-600' : 'text-emerald-700'}">
-              ${evalRes.index != null ? evalRes.index : (isRealDevice ? '—' : '18')}
-            </span>
-            <span class="text-[10px] font-semibold ${evalRes.zone === 'red' ? 'text-rose-600' : evalRes.zone === 'yellow' ? 'text-amber-600' : 'text-emerald-600'}">
-              ${evalRes.zone === 'red' ? 'Красная' : evalRes.zone === 'yellow' ? 'Жёлтая' : 'Зелёная'}
-            </span>
-          </div>
-          <div class="text-[10px] text-slate-500">Диапазон: 0–100</div>
-        </div>
-      </div>
-
-      <!-- 3. ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ С ДОКАЗАТЕЛЬНОЙ БАЗОЙ И "ПОЧЕМУ ЭТОТ СОВЕТ?" -->
+      <!-- 2. ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ С ДОКАЗАТЕЛЬНОЙ БАЗОЙ И "ПОЧЕМУ ЭТОТ СОВЕТ?" -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3.5">
         <div class="flex items-center justify-between border-b border-slate-100 pb-3">
           <div class="flex items-center space-x-2.5">
@@ -1079,7 +1480,6 @@ export const App = {
             const isWhyOpen = Boolean(this.whyExpandedMap[rec.id]);
             return `
               <div class="rounded-xl border ${rec.isCompleted ? 'bg-slate-50/70 border-slate-200' : rec.priority === 'high' ? 'bg-rose-50/20 border-rose-200' : 'bg-white border-slate-200'} p-4 space-y-3 transition hover:shadow-xs">
-                <!-- Заголовок и бейджи -->
                 <div class="flex items-start justify-between gap-2">
                   <div class="flex items-start space-x-3 flex-1">
                     <button onclick="App.toggleAIActionCompleted('${rec.id}')" class="mt-0.5 w-5 h-5 rounded-md border ${rec.isCompleted ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 bg-white text-transparent'} flex items-center justify-center transition flex-shrink-0" title="Отметить выполненным">
@@ -1115,7 +1515,6 @@ export const App = {
                   </div>
                 </div>
 
-                <!-- Источник доказательной базы и кнопка "Почему этот совет?" -->
                 <div class="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <div class="flex items-center space-x-1.5 text-slate-500">
                     <span class="text-teal-700 font-bold">📚</span>
@@ -1129,7 +1528,6 @@ export const App = {
                   </button>
                 </div>
 
-                <!-- Раскрывающийся блок "Почему этот совет?" -->
                 ${isWhyOpen && rec.why ? `
                   <div class="p-3.5 rounded-xl bg-slate-50 border border-teal-100 space-y-2 text-xs animate-in fade-in duration-200">
                     <div class="font-bold text-teal-900 border-b border-teal-200/60 pb-1 flex items-center space-x-1.5">
@@ -1160,7 +1558,7 @@ export const App = {
         </div>
       </div>
 
-      <!-- 4. ИНТЕРАКТИВНЫЙ ДЫХАТЕЛЬНЫЙ ТРЕНАЖЕР 4-4-4 -->
+      <!-- 3. ИНТЕРАКТИВНЫЙ ДЫХАТЕЛЬНЫЙ ТРЕНАЖЕР 4-4-4 -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-3">
         <div class="flex items-center justify-between border-b border-slate-100 pb-3">
           <div class="flex items-center space-x-3">
@@ -1177,7 +1575,6 @@ export const App = {
           </button>
         </div>
 
-        <!-- Animated Visualizer Box -->
         <div id="breathing-box" class="hidden flex flex-col items-center justify-center py-5 space-y-3 bg-slate-50 rounded-xl border border-slate-200">
           <div class="relative w-28 h-28 flex items-center justify-center">
             <div id="breathing-circle" class="w-20 h-20 rounded-full bg-teal-100 border-2 border-teal-500 flex items-center justify-center transition-all duration-1000">
@@ -1191,7 +1588,7 @@ export const App = {
         </div>
       </div>
 
-      <!-- 5. ДЕТАЛЬНЫЙ РАЗБОР ФАКТОРОВ (L_stat и L_dyn) -->
+      <!-- 4. ДЕТАЛЬНЫЙ РАЗБОР ФАКТОРОВ -->
       <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm space-y-4">
         <div class="border-b border-slate-100 pb-2.5">
           <h3 class="text-sm font-bold text-slate-900">Разбор факторов кардио-оценки</h3>
@@ -1201,7 +1598,6 @@ export const App = {
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-          <!-- Группа 1: Анкета и привычки -->
           <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
             <div class="flex items-center space-x-2 text-teal-800 font-bold border-b border-slate-200 pb-1.5">
               <span>📋 Анкета и анамнез (L_stat)</span>
@@ -1220,24 +1616,19 @@ export const App = {
                 <span class="text-slate-500">Курение:</span>
                 <span class="font-semibold ${stat.normalized.S ? 'text-amber-600' : 'text-emerald-700'}">${stat.normalized.S ? 'Да (+0.70)' : 'Нет (0)'}</span>
               </div>
-              <div class="flex justify-between items-center">
-                <span class="text-slate-500">Активность:</span>
-                <span class="font-semibold text-emerald-700">Поддерживает сердце</span>
-              </div>
             </div>
             ` : `
             <div class="text-amber-600 text-xs">Анкета не заполнена полностью.</div>
             `}
           </div>
 
-          <!-- Группа 2: Датчики браслета прямо сейчас -->
           <div class="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
             <div class="flex items-center space-x-2 text-teal-800 font-bold border-b border-slate-200 pb-1.5">
               <span>💓 Биомаркеры датчиков (L_dyn)</span>
             </div>
             <div class="space-y-2 text-[11px] text-slate-600">
               <div class="flex justify-between items-center">
-                <span class="text-slate-500">Пульс в покое:</span>
+                <span class="text-slate-500">Пульс:</span>
                 <span class="font-semibold ${currentHr > 95 ? 'text-amber-600' : 'text-emerald-700'}">${currentHr || (isRealDevice ? '—' : 72)} уд/мин (норма: ${baseline.hr0 || 70})</span>
               </div>
               <div class="flex justify-between items-center">
@@ -1247,10 +1638,6 @@ export const App = {
               <div class="flex justify-between items-center">
                 <span class="text-slate-500">Ритм сердца:</span>
                 <span class="font-semibold text-emerald-700">${this.state.pIrr > 0.1 ? 'Умеренная аритмия' : 'Ровный ритм'}</span>
-              </div>
-              <div class="flex justify-between items-center">
-                <span class="text-slate-500">Качество данных (c):</span>
-                <span class="font-semibold text-slate-800">${Math.round((q.percentage || 88))}%</span>
               </div>
             </div>
           </div>
@@ -1290,7 +1677,8 @@ export const App = {
         profile: StorageService.getProfile() || {},
         symptoms: this.state.symptoms || {},
         isDemo: this.state.isDemo,
-        history: StorageService.getHistory()
+        modelResult: this.state.modelEvaluation,
+        history: StorageService.getHistory(this.state.isDemo)
       };
 
       await this.aiAdvisorService.generateAnalysis(context, true);
@@ -1299,7 +1687,7 @@ export const App = {
       console.warn('AI Advisor refresh error:', e);
       this.showToast('Рекомендации актуализированы.', 'info');
     } finally {
-      this.renderFactorsTab();
+      this.renderAdvisorTab();
     }
   },
 
@@ -1307,14 +1695,18 @@ export const App = {
     if (this.aiAdvisorService) {
       this.aiAdvisorService.toggleActionCompleted(id);
     }
-    this.renderFactorsTab();
+    this.renderAdvisorTab();
   },
 
   toggleWhyExplain(id) {
-    this.whyExpandedMap[id] = !this.whyExpandedMap[id];
-    this.renderFactorsTab();
-  },
-    `;
+    if (this.whyExpandedMap) {
+      this.whyExpandedMap[id] = !this.whyExpandedMap[id];
+    }
+    const el = document.getElementById(`why-explain-${id}`);
+    if (el) {
+      el.classList.toggle('hidden');
+    }
+    this.renderAdvisorTab();
   },
 
   updateConnectionUI() {
@@ -2080,25 +2472,37 @@ export const App = {
   },
 
   exportHistoryCSV() {
-    const hist = StorageService.getHistory();
+    const isDemo = Boolean(this.state.isDemo);
+    const hist = StorageService.getHistory(isDemo);
     if (hist.length === 0) {
       this.showToast('История пуста, экспорт не требуется', 'info');
       return;
     }
 
-    let csvContent = 'ID;Дата;Время;Версия_Модели;Индекс_Риска;Зона;ЧСС;SpO2;Полнота_c;Источник\n';
+    let csvContent = 'ID;Дата;Время;ЧСС (уд/мин);SpO2 (%);HRV SDNN (мс);Индекс риска;Зона риска;Полнота (c);Источник\n';
     hist.forEach(h => {
-      csvContent += `${h.id};${h.dateStr};${h.timeStr};${h.version || '1.0.0'};${h.index || ''};${h.zone || ''};${h.bpm || ''};${h.spo2 || ''};${h.c || ''};${h.isDemo ? 'ДЕМО' : 'РЕАЛЬНЫЙ'}\n`;
+      const id = h.id || '';
+      const date = h.dateStr || h.date || '';
+      const time = h.timeStr || h.time || '';
+      const bpm = h.bpm != null ? h.bpm : (h.hr != null ? h.hr : '');
+      const spo2 = h.spo2 != null ? h.spo2 : '';
+      const sdnn = h.sdnn != null ? h.sdnn : (h.hrv != null ? h.hrv : '');
+      const index = h.index != null ? h.index : '';
+      const zone = h.zone || '';
+      const c = h.c != null ? h.c : '';
+      const source = isDemo ? 'DEMO' : (h.source || 'Qamqor Band (MAX30102)');
+      csvContent += `${id};${date};${time};${bpm};${spo2};${sdnn};${index};${zone};${c};${source}\n`;
     });
 
     const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `qamqor_export_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = isDemo ? 'qamqor_demo_measurements.csv' : 'qamqor_real_measurements.csv';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     this.showToast('CSV файл экспортирован.', 'success');
   },
 

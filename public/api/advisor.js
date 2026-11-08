@@ -50,6 +50,7 @@ export default async function handler(req, res) {
     profile = {},
     rules = [],
     symptoms = {},
+    modelResult = {},
     isDemo = false
   } = body;
 
@@ -67,6 +68,7 @@ export default async function handler(req, res) {
         profile,
         rules,
         symptoms,
+        modelResult,
         isDemo
       });
     }
@@ -79,6 +81,7 @@ export default async function handler(req, res) {
         profile,
         rules,
         symptoms,
+        modelResult,
         isDemo
       });
     }
@@ -96,6 +99,7 @@ export default async function handler(req, res) {
       profile,
       rules,
       symptoms,
+      modelResult,
       isDemo
     });
     res.statusCode = 200;
@@ -108,7 +112,7 @@ export default async function handler(req, res) {
  * Call Google Gemini LLM API with strict JSON schema
  */
 async function callGeminiAdvisor(params) {
-  const { apiKey, metrics, baseline, historyStats, profile, rules, symptoms, isDemo } = params;
+  const { apiKey, metrics, baseline, historyStats, profile, rules, symptoms, modelResult = {}, isDemo } = params;
 
   const prompt = `
 Ты — Qamqor AI Advisor, клинически обоснованный персональный помощник по профилактике и мониторингу кардио-здоровья.
@@ -120,15 +124,17 @@ async function callGeminiAdvisor(params) {
 2. Запрещено назначать лекарства или медицинские препараты.
 3. Если есть боль в груди, выраженная одышка или сатурация < 90% — немедленно укажи необходимость вызова скорой помощи (103/112) и запрети любые упражнения.
 4. Отвечай строго в формате JSON, без markdown разметки вокруг (\`\`\`json ... \`\`\`).
+5. Математическая модель отвечает за вычисление Risk Score. AI отвечает за интерпретацию. Запрещено придумывать или менять Risk Score!
 
 ДАННЫЕ ПОЛЬЗОВАТЕЛЯ:
-- Режим: ${isDemo ? 'Демо-режим' : 'Реальное устройство (ESP32)'}
-- Пульс (ЧСС): ${metrics.hr != null ? metrics.hr + ' уд/мин' : 'нет данных'}
+- Режим: ${isDemo ? 'DEMO MODE (Демонстрационный режим, маркировка AI DEMO ANALYSIS)' : 'REAL DEVICE MODE (Реальное устройство ESP32, маркировка AI REAL DATA ANALYSIS)'}
+- Индекс риска математической модели: ${modelResult.index != null ? modelResult.index + '/100 (' + (modelResult.zone || 'норма') + ')' : (isDemo ? '18/100 (демо)' : 'не рассчитан: недостаточно биометрических данных')}
+- Пульс (ЧСС): ${metrics.hr != null ? metrics.hr + ' уд/мин' : (isDemo ? '72 уд/мин (демо)' : 'нет данных (датчик не активен)')}
 - Базовый пульс в покое: ${baseline.hr0 || 70} уд/мин
-- Кислород (SpO2): ${metrics.spo2 != null ? metrics.spo2 + '%' : 'нет данных'}
-- Вариабельность ритма (SDNN): ${metrics.sdnn != null ? Math.round(metrics.sdnn) + ' мс' : 'нет данных'}
+- Кислород (SpO2): ${metrics.spo2 != null ? metrics.spo2 + '%' : (isDemo ? '98% (демо)' : 'нет данных')}
+- Вариабельность ритма (SDNN): ${metrics.sdnn != null ? Math.round(metrics.sdnn) + ' мс' : (isDemo ? '48 мс (демо)' : 'нет данных')}
 - Симптомы: боль в груди: ${symptoms.chestPain ? 'ДА' : 'нет'}, одышка: ${symptoms.shortness ? 'ДА' : 'нет'}
-- Возраст: ${profile.age || 40}, ИМТ: ${profile.bmi || 24.5}, курение: ${profile.smoker ? 'да' : 'нет'}, стресс: ${profile.stress || 0}
+- Возраст: ${profile.age || 40}, ИМТ: ${profile.bmi || 24.5}, курение: ${profile.smoking ? 'да' : 'нет'}, стресс: ${profile.stress || 0}
 - Статистика 7 дней: средний ЧСС ${historyStats.avgHr || '—'}, измерений: ${historyStats.count || 0}
 - Предварительно отобранные правила доказательной базы:
 ${JSON.stringify(rules.map(r => ({ id: r.id, title: r.title, action: r.action, evidenceSource: r.evidenceSource, expectedBenefit: r.expectedBenefit })))}
@@ -162,10 +168,10 @@ ${JSON.stringify(rules.map(r => ({ id: r.id, title: r.title, action: r.action, e
     }
   ],
   "trend_summary": {
-    "hr_delta": число (отклонение от базового ЧСС),
-    "hrv_status": "normal" | "reduced" | "elevated",
-    "spo2_stability": "high" | "moderate" | "low",
-    "cardio_load_trend": "stable" | "improving" | "increasing"
+    "hr_delta": 0,
+    "hrv_status": "normal",
+    "spo2_stability": "high",
+    "cardio_load_trend": "stable"
   },
   "medical_disclaimer": "Оценка носит исключительно информационно-профилактический характер и не заменяет консультацию врача."
 }
@@ -212,7 +218,7 @@ function validateAdvisorPayload(obj) {
 /**
  * Детерминированный генератор рекомендаций (Fallback & Offline)
  */
-export function generateDeterministicInsight({ metrics, baseline, historyStats, profile, rules, symptoms, isDemo }) {
+export function generateDeterministicInsight({ metrics = {}, baseline = {}, historyStats = {}, profile = {}, rules = [], symptoms = {}, modelResult = {}, isDemo = false }) {
   const hr = metrics.hr;
   const hr0 = baseline.hr0 || 70;
   const hrDelta = hr != null ? hr - hr0 : 0;
@@ -226,26 +232,34 @@ export function generateDeterministicInsight({ metrics, baseline, historyStats, 
   );
 
   let trendAssessment = 'stable';
-  let trendLabel = 'Стабильно';
-  let summary = 'Показатели сердечно-сосудистой системы находятся в пределах привычной нормы. Продолжайте поддерживать баланс активности и отдыха.';
+  let baseTrendLabel = 'Стабильно';
+  let summary = 'Показатели сердечно-сосудистой системы находятся в пределах привычной нормы. Организм адаптирован к текущим нагрузкам.';
   let keyObservation = 'Показатели в границах физиологического оптимума';
 
   if (isEmergency) {
     trendAssessment = 'warning';
-    trendLabel = 'Внимание: вызовите помощь';
+    baseTrendLabel = 'Внимание: вызовите помощь';
     summary = 'Зафиксированы симптомы или показатели критической нагрузки. Немедленно прекратите физическую активность и обеспечьте покой.';
-    keyObservation = 'Критический сигнал: требуется очная медицинская оценка';
+    keyObservation = 'Критический сигнал: требуется очная медицинская оценка (103/112)';
   } else if (hrDelta >= 15 || (spo2 != null && spo2 < 95)) {
     trendAssessment = 'needs_attention';
-    trendLabel = 'Требует внимания';
-    summary = `Наблюдается повышенная нагрузка на вегетативную систему: пульс превышает базовый на ${hrDelta > 0 ? '+' + hrDelta : hrDelta} уд/мин. Рекомендуется сделать паузу для отдыха.`;
-    keyObservation = `Пульс повышен на ${hrDelta > 0 ? '+' + hrDelta : hrDelta} уд/мин относительно индивидуальной нормы (${hr0} уд/мин)`;
+    baseTrendLabel = 'Требует внимания';
+    summary = `Наблюдается умеренное увеличение напряжения регуляторных систем: пульс превышает базовый уровень на ${hrDelta > 0 ? '+' + hrDelta : hrDelta} уд/мин. Рекомендуется отдых и восстановление дыхания.`;
+    keyObservation = `Пульс в покое повышен на ${hrDelta > 0 ? '+' + hrDelta : hrDelta} уд/мин относительно индивидуальной нормы (${hr0} уд/мин)`;
   } else if (hrDelta <= 5 && (spo2 == null || spo2 >= 96)) {
     trendAssessment = 'improving';
-    trendLabel = 'Положительная динамика';
+    baseTrendLabel = 'Положительная динамика';
     summary = 'Ритм и сатурация демонстрируют стабильную адаптацию к повседневным нагрузкам. Показатели восстановления на хорошем уровне.';
-    keyObservation = 'Отличная синхронизация пульса с базовым коридором нормы';
+    keyObservation = 'Отличная синхронизация пульса с индивидуальной базовой нормой';
   }
+
+  // Интеграция вывода математической модели
+  if (modelResult && modelResult.index != null) {
+    const zoneDesc = modelResult.zone === 'red' ? 'высокая нагрузка' : modelResult.zone === 'yellow' ? 'умеренное внимание' : 'норма';
+    summary += ` Индекс кардио-риска модели: ${modelResult.index}/100 (${zoneDesc}).`;
+  }
+
+  const trendLabel = isDemo ? `AI DEMO: ${baseTrendLabel}` : `AI REAL: ${baseTrendLabel}`;
 
   // Map candidate rules to recommendation structure
   const formattedRecs = (rules && rules.length > 0) ? rules.map((r, i) => ({

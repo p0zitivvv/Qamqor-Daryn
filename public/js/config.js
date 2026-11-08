@@ -109,3 +109,17 @@ export const MODEL_CONFIG = {
     characteristicUuid: 'beb5483e-36e1-4688-b7f5-ea07361b26a8'
   }
 };
+
+/**
+ * Единая система состояний устройства Qamqor
+ */
+export const DeviceState = {
+  DISCONNECTED: 'DISCONNECTED',
+  CONNECTING: 'CONNECTING',
+  CONNECTED: 'CONNECTED',
+  STREAMING: 'STREAMING',
+  NO_DATA: 'NO DATA',
+  STALE_DATA: 'STALE DATA',
+  ERROR: 'ERROR'
+};
+

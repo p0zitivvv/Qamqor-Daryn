@@ -3,7 +3,7 @@
  * Layer 1 & 3: Qamqor AI Advisor Client Service
  * 
  * Analyzes trends, coordinates knowledge base rules, calls /api/advisor,
- * and provides seamless offline fallback.
+ * and provides mode-isolated caching and offline fallback.
  */
 
 import { KnowledgeBaseService } from './knowledge_base.js';
@@ -21,12 +21,15 @@ export class AIAdvisorService {
   /**
    * Загрузка сохраненного состояния
    */
-  init() {
+  init(isDemo = false) {
     try {
-      const saved = StorageService.getAIAdvisorCache();
+      const saved = StorageService.getAIAdvisorCache(isDemo);
       if (saved && saved.result) {
         this.cachedResult = saved.result;
         this.lastAnalysisTime = saved.timestamp || 0;
+      } else {
+        this.cachedResult = null;
+        this.lastAnalysisTime = 0;
       }
       const actions = StorageService.getCompletedActions();
       if (Array.isArray(actions)) {
@@ -127,6 +130,14 @@ export class AIAdvisorService {
       return this.cachedResult;
     }
 
+    const isDemo = Boolean(context.isDemo);
+
+    // Если режим переключился — сбрасываем кэш другого режима
+    if (this.cachedResult && Boolean(this.cachedResult.isDemo) !== isDemo) {
+      this.cachedResult = null;
+      this.init(isDemo);
+    }
+
     const now = Date.now();
     if (!force && this.cachedResult && (now - this.lastAnalysisTime < this.minRefreshIntervalMs)) {
       return this.cachedResult;
@@ -140,7 +151,7 @@ export class AIAdvisorService {
         baseline = { hr0: 70 },
         profile = {},
         symptoms = {},
-        isDemo = false,
+        modelResult = {},
         history = []
       } = context;
 
@@ -154,6 +165,7 @@ export class AIAdvisorService {
         profile,
         symptoms,
         historyStats,
+        modelResult,
         derived: {
           hrDelta: historyStats.hrDelta,
           zHrv: metrics.sdnn && metrics.sdnn < 30 ? 1.8 : 0.2,
@@ -171,6 +183,7 @@ export class AIAdvisorService {
         profile,
         rules: matchedRules,
         symptoms,
+        modelResult,
         isDemo
       };
 
@@ -209,18 +222,17 @@ export class AIAdvisorService {
       this.cachedResult = advisorResult;
       this.lastAnalysisTime = Date.now();
 
-      // Сохраняем в кеш
+      // Сохраняем в режимный кэш
       try {
         StorageService.saveAIAdvisorCache({
           result: advisorResult,
           timestamp: this.lastAnalysisTime
-        });
+        }, isDemo);
       } catch (e) {}
 
       return advisorResult;
     } catch (err) {
       console.error('[AIAdvisor] Analysis error:', err);
-      // Гарантированный безопасный ответ
       return this.cachedResult || this.synthesizeLocalInsight(context);
     } finally {
       this.isAnalyzing = false;
@@ -231,7 +243,16 @@ export class AIAdvisorService {
    * Локальный синтез (Offline fallback)
    */
   synthesizeLocalInsight(context) {
-    const { metrics = {}, baseline = { hr0: 70 }, historyStats = {}, rules = [], symptoms = {}, isDemo = false } = context;
+    const {
+      metrics = {},
+      baseline = { hr0: 70 },
+      historyStats = {},
+      rules = [],
+      symptoms = {},
+      modelResult = {},
+      isDemo = false
+    } = context;
+
     const hr = metrics.hr;
     const hr0 = baseline.hr0 || 70;
     const hrDelta = hr != null ? hr - hr0 : 0;
@@ -245,26 +266,33 @@ export class AIAdvisorService {
     );
 
     let trendAssessment = 'stable';
-    let trendLabel = 'Стабильно';
-    let summary = 'Показатели сердечно-сосудистой системы находятся в пределах привычной нормы. Организм успешно адаптирован к текущему уровню нагрузок.';
+    let baseTrendLabel = 'Стабильно';
+    let summary = 'Показатели сердечно-сосудистой системы находятся в пределах привычной нормы. Организм адаптирован к текущим нагрузкам.';
     let keyObservation = 'Показатели в границах физиологического коридора';
 
     if (isEmergency) {
       trendAssessment = 'warning';
-      trendLabel = 'Внимание: вызовите помощь';
+      baseTrendLabel = 'Внимание: вызовите помощь';
       summary = 'Зафиксированы симптомы или показатели критической нагрузки. Немедленно прекратите физическую активность и обеспечьте покой.';
       keyObservation = 'Критический сигнал: требуется очная медицинская оценка';
     } else if (hrDelta >= 15 || (spo2 != null && spo2 < 95)) {
       trendAssessment = 'needs_attention';
-      trendLabel = 'Требует внимания';
+      baseTrendLabel = 'Требует внимания';
       summary = `Наблюдается умеренное увеличение напряжения регуляторных систем: пульс превышает индивидуальную норму на ${hrDelta > 0 ? '+' + hrDelta : hrDelta} уд/мин. Рекомендуется отдых и восстановление дыхания.`;
       keyObservation = `Пульс в покое повышен на ${hrDelta > 0 ? '+' + hrDelta : hrDelta} уд/мин относительно нормы (${hr0} уд/мин)`;
     } else if (hrDelta <= 5 && (spo2 == null || spo2 >= 96)) {
       trendAssessment = 'improving';
-      trendLabel = 'Положительная динамика';
+      baseTrendLabel = 'Положительная динамика';
       summary = 'Ритм и сатурация демонстрируют оптимальное восстановление. Регуляторные системы функционируют стабильно и экономично.';
       keyObservation = 'Отличная синхронизация пульса с индивидуальной базовой нормой';
     }
+
+    if (modelResult && modelResult.index != null) {
+      const zoneName = modelResult.zone === 'red' ? 'высокая нагрузка' : modelResult.zone === 'yellow' ? 'умеренное внимание' : 'норма';
+      summary += ` Индекс кардио-риска модели: ${modelResult.index}/100 (${zoneName}).`;
+    }
+
+    const trendLabel = isDemo ? `AI DEMO: ${baseTrendLabel}` : `AI REAL: ${baseTrendLabel}`;
 
     const recs = (rules && rules.length > 0) ? rules.map((r, i) => ({
       id: r.id || `rec_${i + 1}`,
@@ -331,5 +359,18 @@ export class AIAdvisorService {
         }
       }
     }
+  }
+
+  /**
+   * Санитизация текста от XSS перед вставкой
+   */
+  static escapeHTML(str) {
+    if (str == null) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
   }
 }
