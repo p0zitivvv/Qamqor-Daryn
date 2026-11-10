@@ -155,12 +155,13 @@ void loop() {
   if (deviceConnected && (now - lastTelemetrySendTime >= TELEMETRY_INTERVAL_MS)) {
     lastTelemetrySendTime = now;
 
-    // Формирование JSON-строки для PWA (передаем 0 при отсутствии контакта с датчиком, без фейковых замен)
-    char payload[64];
-    snprintf(payload, sizeof(payload), "{\"bpm\":%u,\"spo2\":%u,\"ecg\":%u}", 
+    // Формирование JSON-строки для PWA (передаем 0 при отсутствии контакта с MAX30102 и lo при обрыве электродов AD8232)
+    char payload[80];
+    snprintf(payload, sizeof(payload), "{\"bpm\":%u,\"spo2\":%u,\"ecg\":%u,\"lo\":%d}", 
              currentBPM, 
              currentSpO2, 
-             currentECG);
+             currentECG,
+             leadsOff ? 1 : 0);
 
     pCharacteristic->setValue((uint8_t*)payload, strlen(payload));
     pCharacteristic->notify();

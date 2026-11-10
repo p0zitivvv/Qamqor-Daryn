@@ -2087,6 +2087,7 @@ const STORAGE_KEYS = {
   IS_DEMO: 'qamqor_v3_is_demo',
   DEVICE_ALIAS: 'qamqor_v3_device_alias',
   SOS_ENDPOINT: 'qamqor_v3_sos_endpoint',
+  THEME: 'qamqor_v3_theme',
   COMPLETED_ACTIONS: 'qamqor_v3_completed_actions',
   AI_ADVISOR_CACHE_REAL: 'qamqor_v3_ai_cache_real',
   AI_ADVISOR_CACHE_DEMO: 'qamqor_v3_ai_cache_demo',
@@ -2236,6 +2237,16 @@ const StorageService = {
   setSOSEndpoint(url) {
     
     safeSetItem(STORAGE_KEYS.SOS_ENDPOINT, url);
+  },
+
+  getTheme() {
+    return safeGetItem(STORAGE_KEYS.THEME) || 'light';
+  },
+
+  setTheme(theme) {
+    if (!['light', 'white', 'dark'].includes(theme)) theme = 'light';
+    safeSetItem(STORAGE_KEYS.THEME, theme);
+    return theme;
   },
 
   // ========================================================
@@ -2842,7 +2853,15 @@ class BLEService {
     this.onError = null;
 
     this.lastPacketTime = null;
+    this.lastPulseTime = null;
+    this.lastEcgTime = null;
     this.lastValidMeasurement = null;
+    this.lastValidPulse = null;
+    this.lastValidECG = null;
+
+    this.pulseSensorStatus = 'disconnected'; // 'ok' | 'no_finger' | 'calculating' | 'sensor_error' | 'disconnected' | 'invalid' | 'waiting'
+    this.ecgSensorStatus = 'disconnected';   // 'ok' | 'leads_off' | 'clipped' | 'disconnected' | 'waiting'
+    this.bleConnectionStatus = 'disconnected'; // 'connected' | 'connecting' | 'reconnecting' | 'disconnected'
 
     this.packetCount = 0;
     this.packetBuffer = '';
@@ -2899,11 +2918,33 @@ class BLEService {
     }
   }
 
-  emitEmptyTelemetry(status) {
+  emitEmptyTelemetry(status = 'disconnected') {
 
     this.rPeakDetector.reset();
 
     this.lastValidMeasurement = null;
+    this.lastValidPulse = null;
+    this.lastValidECG = null;
+
+    if (status === 'disconnected') {
+      this.pulseSensorStatus = 'disconnected';
+      this.ecgSensorStatus = 'disconnected';
+      this.bleConnectionStatus = 'disconnected';
+    } else {
+      if (status === 'no_finger') {
+        this.pulseSensorStatus = 'no_finger';
+      } else if (status === 'calculating') {
+        this.pulseSensorStatus = 'calculating';
+      } else if (status === 'sensor_error') {
+        this.pulseSensorStatus = 'sensor_error';
+      } else if (status === 'invalid') {
+        this.pulseSensorStatus = 'invalid';
+      } else {
+        this.pulseSensorStatus = 'waiting';
+      }
+      this.ecgSensorStatus = 'waiting';
+      this.bleConnectionStatus = 'connected';
+    }
 
     if (this.onTelemetry) {
 
@@ -2916,6 +2957,7 @@ class BLEService {
         rawSpO2: null,
 
         ecg: null,
+        ecgSamples: [],
         ecgQuality: null,
 
         pulseValidation: {
@@ -2927,6 +2969,10 @@ class BLEService {
         hasValidSensors: false,
         hasActivePulse: false,
         hasActiveECG: false,
+
+        pulseSensorStatus: this.pulseSensorStatus,
+        ecgSensorStatus: this.ecgSensorStatus,
+        bleConnectionStatus: this.bleConnectionStatus,
 
         rPeak: false,
         instantaneousBpm: null,
@@ -3252,89 +3298,115 @@ class BLEService {
   }
 
   // =========================================
-  // PACKET HANDLER
+  // PACKET HANDLER & INDEPENDENT SENSOR PARSING
   // =========================================
 
   handlePacket(event) {
-
     try {
-
-      const dataView = event.target.value;
-      const decoder = new TextDecoder('utf-8');
-      const rawChunk = decoder.decode(dataView);
+      let rawChunk = '';
+      if (typeof event === 'string') {
+        rawChunk = event;
+      } else if (event && event.target && event.target.value) {
+        const dataView = event.target.value;
+        const decoder = new TextDecoder('utf-8');
+        rawChunk = decoder.decode(dataView);
+      } else if (event instanceof DataView || (typeof ArrayBuffer !== 'undefined' && event instanceof ArrayBuffer)) {
+        const dv = event instanceof DataView ? event : new DataView(event);
+        const decoder = new TextDecoder('utf-8');
+        rawChunk = decoder.decode(dv);
+      } else if (event && typeof event === 'object' && !event.target) {
+        // Direct object passed for testing or simulation
+        return this.parsePacketObject(event);
+      }
 
       if (!rawChunk) return;
 
       this.lastPacketTime = Date.now();
       this.packetCount++;
 
-      // Очистка от \0 (null-байтов) и непечатных управляющих символов (кроме перевода строк)
+      // Очистка от \0 (null-байтов) и непечатных управляющих символов
       const cleanChunk = rawChunk.replace(/\0/g, '').replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
       this.packetBuffer += cleanChunk;
 
-      // Защита от переполнения буфера (храним хвост)
-      if (this.packetBuffer.length > 2048) {
-        this.packetBuffer = this.packetBuffer.slice(-512);
+      // Защита от переполнения буфера (сохраняем хвост)
+      if (this.packetBuffer.length > 4096) {
+        this.packetBuffer = this.packetBuffer.slice(-1024);
       }
 
-      console.log(
-        '[QAMQOR BLE] Received chunk:',
-        cleanChunk
-      );
-
-      // Извлечение JSON-объектов из потокового буфера
+      // Извлечение JSON-объектов из потокового буфера (с поддержкой строк и вложенности)
       let parsedObjects = [];
       let lastEndIndex = 0;
-      let braceDepth = 0;
-      let startIndex = -1;
 
-      for (let i = 0; i < this.packetBuffer.length; i++) {
-        const ch = this.packetBuffer[i];
-        if (ch === '{') {
-          if (braceDepth === 0) startIndex = i;
-          braceDepth++;
-        } else if (ch === '}') {
-          braceDepth--;
-          if (braceDepth === 0 && startIndex !== -1) {
-            const candidate = this.packetBuffer.substring(startIndex, i + 1);
-            try {
-              const obj = JSON.parse(candidate);
-              parsedObjects.push({ obj, raw: candidate });
-              lastEndIndex = i + 1;
-            } catch (err) {
-              // Попытка спарсить через Regex, если JSON поврежден внутри
-              const hrM = candidate.match(/(?:heartRate|heart_rate|bpm|hr)\s*[:=]\s*(\d+)/i);
-              const spM = candidate.match(/(?:spo2|o2|oximeter)\s*[:=]\s*(\d+)/i);
-              if (hrM && spM) {
-                parsedObjects.push({
-                  obj: {
-                    status: 'receiving',
-                    heartRate: parseInt(hrM[1], 10),
-                    spo2: parseInt(spM[1], 10)
-                  },
-                  raw: candidate
-                });
-                lastEndIndex = i + 1;
+      for (let s = 0; s < this.packetBuffer.length; s++) {
+        if (this.packetBuffer[s] !== '{') continue;
+
+        let braceDepth = 0;
+        let inString = false;
+        let escape = false;
+
+        for (let e = s; e < this.packetBuffer.length; e++) {
+          const ch = this.packetBuffer[e];
+          if (escape) {
+            escape = false;
+            continue;
+          }
+          if (ch === '\\') {
+            escape = true;
+            continue;
+          }
+          if (ch === '"') {
+            inString = !inString;
+            continue;
+          }
+          if (!inString) {
+            if (ch === '{') {
+              braceDepth++;
+            } else if (ch === '}') {
+              braceDepth--;
+              if (braceDepth === 0) {
+                const candidate = this.packetBuffer.substring(s, e + 1);
+                try {
+                  const obj = JSON.parse(candidate);
+                  parsedObjects.push({ obj, raw: candidate });
+                  lastEndIndex = e + 1;
+                  s = e; // переход к концу найденного объекта
+                  break;
+                } catch (err) {
+                  // Попытка восстановить через Regex, если JSON поврежден внутри
+                  const hrM = candidate.match(/(?:heartRate|heart_rate|bpm|hr)\s*[:=]\s*(\d+)/i);
+                  const spM = candidate.match(/(?:spo2|o2|oximeter)\s*[:=]\s*(\d+)/i);
+                  const ecgM = candidate.match(/(?:ecg|raw_ecg|adc)\s*[:=]\s*(\d+)/i);
+                  const stM = candidate.match(/status\s*[:=]\s*["']?([a-zA-Z0-9_-]+)["']?/i);
+                  if (hrM || spM || ecgM || stM) {
+                    const recovered = {};
+                    if (hrM) recovered.bpm = parseInt(hrM[1], 10);
+                    if (spM) recovered.spo2 = parseInt(spM[1], 10);
+                    if (ecgM) recovered.ecg = parseInt(ecgM[1], 10);
+                    if (stM) recovered.status = stM[1];
+                    parsedObjects.push({ obj: recovered, raw: candidate });
+                    lastEndIndex = e + 1;
+                    s = e;
+                    break;
+                  }
+                }
               }
             }
-            startIndex = -1;
           }
         }
       }
 
-      // Если полных фигурных скобок не найдено, но в буфере есть готовые числа ЧСС и SpO2
+      // Если полных фигурных скобок не найдено, но в буфере есть готовые числа
       if (parsedObjects.length === 0) {
         const hrM = this.packetBuffer.match(/(?:heartRate|heart_rate|bpm|hr)\s*[:=]\s*(\d+)/i);
         const spM = this.packetBuffer.match(/(?:spo2|o2|oximeter)\s*[:=]\s*(\d+)/i);
-        if (hrM && spM) {
-          parsedObjects.push({
-            obj: {
-              status: 'receiving',
-              heartRate: parseInt(hrM[1], 10),
-              spo2: parseInt(spM[1], 10)
-            },
-            raw: this.packetBuffer.trim()
-          });
+        const ecgM = this.packetBuffer.match(/(?:ecg|raw_ecg|adc)\s*[:=]\s*(\d+)/i);
+        if ((hrM && spM) || ecgM) {
+          const recObj = {};
+          if (hrM) recObj.bpm = parseInt(hrM[1], 10);
+          if (spM) recObj.spo2 = parseInt(spM[1], 10);
+          if (ecgM) recObj.ecg = parseInt(ecgM[1], 10);
+          recObj.status = 'receiving';
+          parsedObjects.push({ obj: recObj, raw: this.packetBuffer.trim() });
           this.packetBuffer = '';
         }
       } else {
@@ -3347,149 +3419,230 @@ class BLEService {
         return;
       }
 
-      // Берем самый последний актуальный пакет из очереди
-      const latest = parsedObjects[parsedObjects.length - 1];
-      const json = latest.obj;
-      const rawText = latest.raw;
-
-      console.log(
-        '[QAMQOR BLE] Parsed JSON:',
-        json
-      );
-
-      // =====================================
-      // DEVICE STATUS
-      // =====================================
-      const rawStatus = String(json.status || 'receiving').toLowerCase();
-      const isExplicitNoData = ['calculating', 'no_finger', 'sensor_error', 'initializing'].includes(rawStatus);
-
-      // Чтение биометрии: поддержка heartRate, bpm, spo2
-      const bpm = Number(json.heartRate ?? json.bpm);
-      const spo2 = Number(json.spo2);
-      const rawEcg = json.ecg != null ? Number(json.ecg) : null;
-      const hasActiveECG = Number.isFinite(rawEcg) && rawEcg > 10 && rawEcg < 4085 && rawEcg !== 2048;
-
-      if (isExplicitNoData || !Number.isFinite(bpm) || !Number.isFinite(spo2) || bpm <= 0 || spo2 <= 0) {
-        const devStatus = json.status || 'connected_no_data';
-        this.emitEmptyTelemetry(devStatus);
-        this.updateStatus('connected_no_data', this.getStatusText(devStatus));
-        return;
+      // ВАЖНО: обрабатываем КАЖДЫЙ распознанный пакет по очереди, не отбрасывая промежуточные отсчеты ЭКГ!
+      for (const item of parsedObjects) {
+        this.parsePacketObject(item.obj, item.raw);
       }
-
-      // =====================================
-      // VALIDATE PULSE OXIMETRY
-      // =====================================
-
-      const pulseValidation =
-        validatePulseOximetry(bpm, spo2);
-
-      const isValid =
-        pulseValidation?.isValid === true &&
-        Number.isFinite(Number(pulseValidation.bpm)) &&
-        Number.isFinite(Number(pulseValidation.spo2)) &&
-        Number(pulseValidation.bpm) >= 40 &&
-        Number(pulseValidation.bpm) <= 200 &&
-        Number(pulseValidation.spo2) >= 70 &&
-        Number(pulseValidation.spo2) <= 100;
-
-      if (!isValid) {
-
-        console.warn(
-          '[QAMQOR BLE] Measurement rejected (outside limits):',
-          bpm,
-          spo2
-        );
-
-        this.emitEmptyTelemetry('invalid');
-        this.updateStatus('connected_no_data', this.getStatusText('invalid'));
-        return;
-      }
-
-      // =====================================
-      // VALID TELEMETRY
-      // =====================================
-
-      const now = Date.now();
-
-      let ecgQuality = null;
-      let peakResult = null;
-      if (hasActiveECG) {
-        ecgQuality = checkECGSignalQuality(rawEcg, false);
-        if (ecgQuality.isValid) {
-          peakResult = this.rPeakDetector.processSample(rawEcg, now);
-        }
-      }
-
-      const telemetry = {
-
-        bpm: Number(pulseValidation.bpm),
-
-        spo2: Number(pulseValidation.spo2),
-
-        rawBpm: bpm,
-
-        rawSpO2: spo2,
-
-        ecg: hasActiveECG ? rawEcg : null,
-
-        ecgQuality: ecgQuality,
-
-        pulseValidation,
-
-        hasValidSensors: true,
-
-        hasActivePulse: true,
-
-        hasActiveECG: hasActiveECG,
-
-        rPeak: peakResult ? peakResult.peakDetected : false,
-
-        instantaneousBpm: peakResult ? peakResult.instantaneousBpm : null,
-
-        rrIntervals:
-          this.rPeakDetector.getValidRRIntervals(),
-
-        timestamp: now,
-
-        status: 'receiving'
-      };
-
-      this.lastValidMeasurement = telemetry;
-
-      this.isConnected = true;
-
-      this.updateStatus(
-        'connected_receiving',
-        'Получение реальных данных'
-      );
-
-      if (this.onTelemetry) {
-        try {
-          this.onTelemetry(telemetry);
-        } catch (consumerErr) {
-          console.error('[QAMQOR BLE] Ошибка в обработчике onTelemetry приложения:', consumerErr);
-        }
-      }
-
-      console.log(
-        '[QAMQOR BLE] Valid telemetry:',
-        {
-          bpm: telemetry.bpm,
-          spo2: telemetry.spo2
-        }
-      );
 
     } catch (error) {
-
-      console.error(
-        '[QAMQOR BLE] Packet processing error:',
-        error
-      );
-
+      console.error('[QAMQOR BLE] Packet processing error:', error);
       if (this.onError) {
         this.onError(error);
       }
     }
+  }
+
+  /**
+   * Независимая обработка биометрии MAX30102 и AD8232 из единого пакета JSON
+   */
+  parsePacketObject(json, rawText = '') {
+    if (!json || typeof json !== 'object') return null;
+
+    const now = Date.now();
+    this.lastPacketTime = now;
+    this.isConnected = true;
+    this.bleConnectionStatus = 'connected';
+
+    // --------------------------------------------------------------------
+    // 1. MAX30102: ИЗВЛЕЧЕНИЕ ПУЛЬСА (BPM) И САТУРАЦИИ (SpO2)
+    // --------------------------------------------------------------------
+    let hasActivePulse = false;
+    let validatedBpm = null;
+    let validatedSpo2 = null;
+    let pulseValidation = { isValid: false, bpm: null, spo2: null };
+    let currentPulseStatus = 'waiting';
+
+    const rawStatus = String(json.status || json.pulseStatus || '').toLowerCase();
+    const rawBpm = json.heartRate != null ? Number(json.heartRate) : (json.bpm != null ? Number(json.bpm) : (json.hr != null ? Number(json.hr) : null));
+    const rawSpo2 = json.spo2 != null ? Number(json.spo2) : (json.o2 != null ? Number(json.o2) : null);
+
+    const isExplicitPulseNoData = ['no_finger', 'calculating', 'sensor_error', 'initializing'].includes(rawStatus);
+
+    if (rawStatus === 'no_finger') {
+      currentPulseStatus = 'no_finger';
+      this.lastValidPulse = null;
+    } else if (rawStatus === 'calculating') {
+      currentPulseStatus = 'calculating';
+    } else if (rawStatus === 'sensor_error') {
+      currentPulseStatus = 'sensor_error';
+      this.lastValidPulse = null;
+    } else if (rawStatus === 'initializing') {
+      currentPulseStatus = 'initializing';
+    } else if (Number.isFinite(rawBpm) && Number.isFinite(rawSpo2)) {
+      if (rawBpm <= 0 || rawSpo2 <= 0) {
+        // Датчик физически не зафиксировал палец (прошивка шлет 0 при отсутствии контакта)
+        currentPulseStatus = 'no_finger';
+        this.lastValidPulse = null;
+      } else {
+        const valRes = validatePulseOximetry(rawBpm, rawSpo2);
+        pulseValidation = valRes;
+        if (valRes && valRes.isValid) {
+          currentPulseStatus = 'ok';
+          hasActivePulse = true;
+          validatedBpm = valRes.bpm;
+          validatedSpo2 = valRes.spo2;
+          this.lastPulseTime = now;
+          this.lastValidPulse = { bpm: validatedBpm, spo2: validatedSpo2, timestamp: now };
+        } else {
+          currentPulseStatus = 'invalid';
+        }
+      }
+    } else {
+      // В этом конкретном пакете данных MAX30102 нет (например, выделенный ЭКГ-пакет)
+      if (this.lastPulseTime && (now - this.lastPulseTime < 3500) && this.lastValidPulse) {
+        // Предыдущий замер пульса еще свежий (менее 3.5 сек)
+        currentPulseStatus = 'ok';
+        hasActivePulse = true;
+        validatedBpm = this.lastValidPulse.bpm;
+        validatedSpo2 = this.lastValidPulse.spo2;
+        pulseValidation = { isValid: true, bpm: validatedBpm, spo2: validatedSpo2 };
+      } else {
+        currentPulseStatus = isExplicitPulseNoData ? rawStatus : (this.pulseSensorStatus === 'disconnected' ? 'disconnected' : 'waiting');
+      }
+    }
+
+    this.pulseSensorStatus = currentPulseStatus;
+
+    // --------------------------------------------------------------------
+    // 2. AD8232: ИЗВЛЕЧЕНИЕ СИГНАЛА ЭКГ, КОНТРОЛЬ КАЧЕСТВА И R-ПИКИ
+    // --------------------------------------------------------------------
+    let hasActiveECG = false;
+    let ecgSamples = [];
+    let latestSample = null;
+    let latestEcgQuality = null;
+    let peakDetected = false;
+    let instantaneousBpm = null;
+    let currentEcgStatus = 'waiting';
+
+    const isLeadsOff = Boolean(
+      json.leadsOff === true ||
+      json.lo === 1 ||
+      json.lo === true ||
+      json.lead_off === true ||
+      json.leads_off === true
+    );
+
+    if (Array.isArray(json.samples)) {
+      ecgSamples = json.samples.map(Number).filter(Number.isFinite);
+    } else if (Array.isArray(json.ecgSamples)) {
+      ecgSamples = json.ecgSamples.map(Number).filter(Number.isFinite);
+    } else if (json.ecg != null && Number.isFinite(Number(json.ecg))) {
+      ecgSamples = [Number(json.ecg)];
+    }
+
+    if (isLeadsOff) {
+      currentEcgStatus = 'leads_off';
+      latestEcgQuality = { isValid: false, isLeadsOff: true, isClipped: false, message: 'Обрыв электродов (Leads Off)' };
+      this.lastValidECG = null;
+    } else if (ecgSamples.length > 0) {
+      let anyValid = false;
+      for (const sample of ecgSamples) {
+        latestSample = sample;
+        const q = checkECGSignalQuality(sample, false);
+        latestEcgQuality = q;
+
+        // Если датчик AD8232 висит на ровной изолинии 2048 (не подключен)
+        if (sample === 2048 && ecgSamples.length === 1 && !json.samples) {
+          // Изолиния без динамики
+          currentEcgStatus = 'leads_off';
+        } else if (!q.isValid && q.isClipped) {
+          currentEcgStatus = 'clipped';
+        } else if (q.isValid) {
+          anyValid = true;
+          currentEcgStatus = 'ok';
+          const peakRes = this.rPeakDetector.processSample(sample, now);
+          if (peakRes && peakRes.peakDetected) {
+            peakDetected = true;
+            if (peakRes.instantaneousBpm) {
+              instantaneousBpm = peakRes.instantaneousBpm;
+            }
+          }
+        }
+      }
+
+      if (anyValid) {
+        hasActiveECG = true;
+        this.lastEcgTime = now;
+        this.lastValidECG = { lastSample: latestSample, timestamp: now };
+      }
+    } else {
+      // В этом пакете нет поля ЭКГ
+      if (this.lastEcgTime && (now - this.lastEcgTime < 3000) && this.lastValidECG) {
+        currentEcgStatus = 'ok';
+        hasActiveECG = true;
+        latestSample = this.lastValidECG.lastSample;
+      } else {
+        currentEcgStatus = this.ecgSensorStatus === 'disconnected' ? 'disconnected' : 'waiting';
+      }
+    }
+
+    this.ecgSensorStatus = currentEcgStatus;
+
+    // --------------------------------------------------------------------
+    // 3. ФОРМИРОВАНИЕ ИТОГОВОЙ ДЕКУПЛИРОВАННОЙ ТЕЛЕМЕТРИИ
+    // --------------------------------------------------------------------
+    const rrIntervals = this.rPeakDetector.getValidRRIntervals();
+
+    let overallStatus = 'connected_no_data';
+    if (hasActivePulse && hasActiveECG) {
+      overallStatus = 'receiving';
+    } else if (hasActivePulse) {
+      overallStatus = 'receiving_pulse_only';
+    } else if (hasActiveECG) {
+      overallStatus = 'receiving_ecg_only';
+    } else if (currentPulseStatus === 'no_finger') {
+      overallStatus = 'no_finger';
+    } else if (currentPulseStatus === 'calculating') {
+      overallStatus = 'calculating';
+    } else if (currentPulseStatus === 'sensor_error') {
+      overallStatus = 'sensor_error';
+    }
+
+    const telemetry = {
+      // MAX30102
+      bpm: hasActivePulse ? validatedBpm : null,
+      spo2: hasActivePulse ? validatedSpo2 : null,
+      rawBpm: Number.isFinite(rawBpm) ? rawBpm : null,
+      rawSpO2: Number.isFinite(rawSpo2) ? rawSpo2 : null,
+      pulseValidation,
+      hasActivePulse,
+      pulseSensorStatus: this.pulseSensorStatus,
+
+      // AD8232
+      ecg: hasActiveECG ? latestSample : null,
+      ecgSamples: hasActiveECG ? ecgSamples : [],
+      ecgQuality: latestEcgQuality,
+      hasActiveECG,
+      ecgSensorStatus: this.ecgSensorStatus,
+
+      // R-Peak & RR-интервалы (строго из сигнала ЭКГ)
+      rPeak: peakDetected,
+      instantaneousBpm,
+      rrIntervals,
+
+      // Общие агрегированные флаги
+      hasValidSensors: hasActivePulse || hasActiveECG,
+      bleConnectionStatus: this.bleConnectionStatus,
+      timestamp: now,
+      status: overallStatus,
+      rawJSON: json
+    };
+
+    if (hasActivePulse || hasActiveECG) {
+      this.lastValidMeasurement = telemetry;
+    }
+
+    this.updateStatus(overallStatus, this.getStatusText(overallStatus));
+
+    if (this.onTelemetry) {
+      try {
+        this.onTelemetry(telemetry);
+      } catch (consumerErr) {
+        console.error('[QAMQOR BLE] Consumer onTelemetry error:', consumerErr);
+      }
+    }
+
+    return telemetry;
   }
 
   // =========================================
@@ -3497,32 +3650,21 @@ class BLEService {
   // =========================================
 
   getStatusText(status) {
-
     const messages = {
-
-      receiving:
-        'Получение реальных данных',
-
-      calculating:
-        'Рассчитываются показатели',
-
-      no_finger:
-        'Приложите палец к датчику',
-
-      sensor_error:
-        'Ошибка датчика MAX30102',
-
-      initializing:
-        'Инициализация браслета',
-
-      invalid:
-        'Некорректные измерения'
+      receiving: 'Получение данных MAX30102 + AD8232',
+      receiving_pulse_only: 'MAX30102 активен • Ожидание ЭКГ',
+      receiving_ecg_only: 'AD8232 активен • Приложите палец к MAX30102',
+      calculating: 'Рассчитываются показатели',
+      no_finger: 'Приложите палец к датчику MAX30102',
+      sensor_error: 'Ошибка датчика MAX30102',
+      initializing: 'Инициализация браслета',
+      invalid: 'Некорректные измерения',
+      connected_no_data: 'Подключено. Ожидание данных датчиков',
+      reconnecting: 'Соединение потеряно, переподключаюсь...',
+      disconnected: 'Браслет отключён'
     };
 
-    return (
-      messages[status] ||
-      'Ожидание данных'
-    );
+    return messages[status] || 'Ожидание данных';
   }
 }
 
@@ -3939,6 +4081,10 @@ const App = {
     pIrr: null,
     lastUpdateTime: null,
     lastTelemetryTimestamp: 0,
+    lastPulseTimestamp: 0,
+    lastECGTimestamp: 0,
+    pulseSensorStatus: 'disconnected', // 'ok' | 'no_finger' | 'calculating' | 'sensor_error' | 'disconnected' | 'waiting'
+    ecgSensorStatus: 'disconnected',   // 'ok' | 'leads_off' | 'clipped' | 'disconnected' | 'waiting'
 
     // Результаты моделирования
     lStatResult: null,
@@ -3969,6 +4115,9 @@ const App = {
 
   init() {
     console.log(`[Qamqor] Инициализация системы, версия: ${MODEL_CONFIG.version}`);
+
+    // Применяем сохранённую тему до рендеринга UI
+    this.applyTheme(StorageService.getTheme());
 
     // Инициализация сервисов
     this.baselineService = new PersonalBaselineService(StorageService.getBaseline());
@@ -4035,16 +4184,41 @@ const App = {
     // Сторожевой таймер активности реальных датчиков (Watchdog)
     setInterval(() => {
       if (this.state.isConnected && !this.state.isDemo) {
-        if (this.state.lastTelemetryTimestamp > 0 && Date.now() - this.state.lastTelemetryTimestamp > 4500) {
-          if (this.state.deviceState === 'connected_receiving') {
-            console.log('[BLE Watchdog] Поток измерений прекращен, переключение в connected_no_data');
-            this.state.deviceState = 'connected_no_data';
+        const now = Date.now();
+        let stateChanged = false;
+
+        // 1. Независимый Watchdog для MAX30102
+        if (this.state.lastPulseTimestamp > 0 && now - this.state.lastPulseTimestamp > 4500) {
+          if (this.state.bpm != null || this.state.spo2 != null) {
+            console.log('[BLE Watchdog] Поток пульсоксиметра MAX30102 прекращен (таймаут 4.5с)');
             this.state.bpm = null;
             this.state.spo2 = null;
-            this.updateConnectionUI();
-            this.recalculateModel();
-            this.renderDashboardMetrics();
+            this.state.pulseSensorStatus = 'no_finger';
+            stateChanged = true;
           }
+        }
+
+        // 2. Независимый Watchdog для AD8232
+        if (this.state.lastECGTimestamp > 0 && now - this.state.lastECGTimestamp > 4500) {
+          if (this.state.ecgSensorStatus === 'ok') {
+            console.log('[BLE Watchdog] Поток кардиографа AD8232 прекращен (таймаут 4.5с)');
+            this.state.ecgSensorStatus = 'waiting';
+            if (this.ecgCanvas) {
+              this.ecgCanvas.realECGQueue = [];
+            }
+            stateChanged = true;
+          }
+        }
+
+        if (stateChanged) {
+          const hasPulse = this.state.bpm != null && this.state.spo2 != null;
+          const hasECG = this.state.ecgSensorStatus === 'ok';
+          this.state.deviceState = (hasPulse && hasECG) ? 'connected_receiving' :
+                                   hasPulse ? 'connected_receiving_pulse' :
+                                   hasECG ? 'connected_receiving_ecg' : 'connected_no_data';
+          this.updateConnectionUI();
+          this.recalculateModel();
+          this.renderDashboardMetrics();
         }
       }
     }, 2000);
@@ -4194,6 +4368,8 @@ const App = {
   // ОБРАБОТКА ПОСТУПЛЕНИЯ ДАННЫХ И СОСТОЯНИЙ BLE
   // ========================================================
   handleBLETelemetry(data) {
+    if (!data) return;
+
     // При поступлении реальных данных принудительно отключаем демо-режим
     if (this.state.isDemo) {
       this.demoSimulator.stop();
@@ -4201,80 +4377,108 @@ const App = {
       StorageService.setDemoMode(false);
     }
 
-    if (data.hasValidSensors) {
-      this.state.deviceState = 'connected_receiving';
-      this.state.lastTelemetryTimestamp = Date.now();
-      if (data.bpm != null && data.bpm > 0) this.state.bpm = data.bpm;
-      if (data.spo2 != null && data.spo2 > 0) this.state.spo2 = data.spo2;
+    const now = Date.now();
+    this.state.lastTelemetryTimestamp = now;
 
-      // Если пользователь ещё на экране анкеты/проверки датчика, сразу переводим в дашборд с реальными данными!
-      if (this.state.currentScreen === 'onboarding-survey') {
-        this.completeSurveyAndOpenApp();
-      }
+    // 1. НЕЗАВИСИМАЯ ОБРАБОТКА ДАТЧИКА ПУЛЬСОКСИМЕТРИИ MAX30102
+    if (data.hasActivePulse && data.bpm != null && data.bpm > 0) {
+      this.state.bpm = data.bpm;
+      this.state.spo2 = data.spo2;
+      this.state.lastPulseTimestamp = now;
+      this.state.pulseSensorStatus = data.pulseSensorStatus || 'ok';
+    } else {
+      this.state.bpm = null;
+      this.state.spo2 = null;
+      this.state.pulseSensorStatus = data.pulseSensorStatus || 'waiting';
+    }
 
-      // Сохраняем только валидные замеры (receiving, пульс 40-200, SpO2 70-100) не чаще раза в 5 секунд
-      const isPhysiologicalData = (
-        data.status === 'receiving' &&
-        typeof this.state.bpm === 'number' && this.state.bpm >= 40 && this.state.bpm <= 200 &&
-        typeof this.state.spo2 === 'number' && this.state.spo2 >= 70 && this.state.spo2 <= 100
-      );
+    // 2. НЕЗАВИСИМАЯ ОБРАБОТКА ДАТЧИКА ЭКГ AD8232
+    if (data.hasActiveECG) {
+      this.state.lastECGTimestamp = now;
+      this.state.ecgSensorStatus = data.ecgSensorStatus || 'ok';
 
-      if (isPhysiologicalData && (!this._lastHistSavedAt || Date.now() - this._lastHistSavedAt >= 5000)) {
-        this._lastHistSavedAt = Date.now();
-        const now = new Date();
-        const histEntry = {
-          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-          timestamp: Date.now(),
-          time: now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-          date: now.toLocaleDateString('ru-RU'),
-          timeStr: now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-          dateStr: now.toLocaleDateString('ru-RU'),
-          bpm: this.state.bpm,
-          hr: this.state.bpm,
-          spo2: this.state.spo2,
-          sdnn: this.state.sdnn != null ? Math.round(this.state.sdnn) : null,
-          hrv: this.state.sdnn != null ? Math.round(this.state.sdnn) : null,
-          index: this.state.modelEvaluation ? this.state.modelEvaluation.index : null,
-          zone: this.state.modelEvaluation ? this.state.modelEvaluation.zone : 'green',
-          source: 'Qamqor Band (MAX30102)',
-          isDemo: false
-        };
-        try {
-          StorageService.addHistoryEntry(histEntry, false);
-          this.renderRecentMeasurementsTable();
-          if (this.state.activeTab === 'factors') {
-            this.renderDynamicsTab();
+      if (this.ecgCanvas) {
+        // Поддержка как пакета с массивом отсчетов ecgSamples, так и одиночного ecg
+        if (Array.isArray(data.ecgSamples) && data.ecgSamples.length > 0) {
+          for (const sample of data.ecgSamples) {
+            this.ecgCanvas.pushRealSample(sample);
           }
-        } catch (saveErr) {
-          console.warn('[Qamqor] Безопасная обработка сохранения истории:', saveErr);
+        } else if (data.ecg != null) {
+          this.ecgCanvas.pushRealSample(data.ecg);
+        }
+        this.ecgCanvas.setStreamActive(true, false); // allowSynthetic = false в реальном режиме!
+        if (this.state.bpm) {
+          this.ecgCanvas.setBPM(this.state.bpm);
         }
       }
     } else {
-      if (this.state.isConnected) {
-        this.state.deviceState = 'connected_no_data';
-        this.state.bpm = null;
-        this.state.spo2 = null;
+      this.state.ecgSensorStatus = data.ecgSensorStatus || 'waiting';
+      if (this.ecgCanvas && (!this.state.lastECGTimestamp || (now - this.state.lastECGTimestamp > 3500))) {
+        this.ecgCanvas.setStreamActive(this.state.isConnected, false);
       }
     }
 
-    if (data.ecg != null && this.ecgCanvas) {
-      this.ecgCanvas.pushRealSample(data.ecg);
-    }
-    if (this.ecgCanvas) {
-      this.ecgCanvas.setStreamActive(this.state.isConnected, false);
-      if (this.state.bpm) this.ecgCanvas.setBPM(this.state.bpm);
-    }
+    // 3. ОБЩИЙ СТАТУС УСТРОЙСТВА
+    const hasPulse = this.state.bpm != null && this.state.spo2 != null;
+    const hasECG = this.state.ecgSensorStatus === 'ok';
+    this.state.deviceState = (hasPulse && hasECG) ? 'connected_receiving' :
+                             hasPulse ? 'connected_receiving_pulse' :
+                             hasECG ? 'connected_receiving_ecg' : 'connected_no_data';
 
+    // 4. ВАРИАБЕЛЬНОСТЬ РИТМА (HRV SDNN / pIrr) — СТРОГО ИЗ R-ПИКОВ ЭКГ
     if (data.rrIntervals && data.rrIntervals.length >= 5) {
       try {
         this.state.sdnn = calculateSDNN(data.rrIntervals);
         this.state.pIrr = calculateRhythmIrregularity(data.rrIntervals);
-      } catch(e) {
+      } catch (e) {
         console.warn('SDNN/pIrr calculation error:', e);
       }
-    } else if (!data.hasValidSensors) {
+    } else if (!hasECG) {
       this.state.sdnn = null;
       this.state.pIrr = null;
+    }
+
+    // Если пользователь ещё на экране анкеты/проверки датчика, сразу переводим в дашборд
+    if (this.state.currentScreen === 'onboarding-survey' && (hasPulse || hasECG)) {
+      this.completeSurveyAndOpenApp();
+    }
+
+    // 5. СОХРАНЕНИЕ В ИСТОРИЮ ТОЛЬКО ПРИ НАЛИЧИИ ДОСТОВЕРНЫХ ФИЗИОЛОГИЧЕСКИХ ДАННЫХ
+    const isPhysiologicalData = (
+      hasPulse &&
+      typeof this.state.bpm === 'number' && this.state.bpm >= 40 && this.state.bpm <= 200 &&
+      typeof this.state.spo2 === 'number' && this.state.spo2 >= 70 && this.state.spo2 <= 100
+    );
+
+    if (isPhysiologicalData && (!this._lastHistSavedAt || now - this._lastHistSavedAt >= 5000)) {
+      this._lastHistSavedAt = now;
+      const nowDate = new Date();
+      const histEntry = {
+        id: now.toString(36) + Math.random().toString(36).slice(2, 5),
+        timestamp: now,
+        time: nowDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+        date: nowDate.toLocaleDateString('ru-RU'),
+        timeStr: nowDate.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+        dateStr: nowDate.toLocaleDateString('ru-RU'),
+        bpm: this.state.bpm,
+        hr: this.state.bpm,
+        spo2: this.state.spo2,
+        sdnn: this.state.sdnn != null ? Math.round(this.state.sdnn) : null,
+        hrv: this.state.sdnn != null ? Math.round(this.state.sdnn) : null,
+        index: this.state.modelEvaluation ? this.state.modelEvaluation.index : null,
+        zone: this.state.modelEvaluation ? this.state.modelEvaluation.zone : 'green',
+        source: 'Qamqor Band (MAX30102 + AD8232)',
+        isDemo: false
+      };
+      try {
+        StorageService.addHistoryEntry(histEntry, false);
+        this.renderRecentMeasurementsTable();
+        if (this.state.activeTab === 'factors') {
+          this.renderDynamicsTab();
+        }
+      } catch (saveErr) {
+        console.warn('[Qamqor] Безопасная обработка сохранения истории:', saveErr);
+      }
     }
 
     this.recalculateModel();
@@ -4300,7 +4504,7 @@ const App = {
       if (!status.status) this.state.deviceState = 'connected_no_data';
       this.state.deviceName = status.deviceName || 'Qamqor_Band';
       if (!this._hasNotifiedConnect) {
-        this.showToast(`Браслет ${this.state.deviceName} подключен. Загрузка данных на дашборд...`, 'success');
+        this.showToast(`Браслет ${this.state.deviceName} подключен. Ожидание данных датчиков...`, 'success');
         this._hasNotifiedConnect = true;
       }
       if (this.ecgCanvas) {
@@ -4343,8 +4547,13 @@ const App = {
     this.state.lDynResult = null;
     this.state.modelEvaluation = null;
     this.state.qualityResult = null;
+    this.state.pulseSensorStatus = 'disconnected';
+    this.state.ecgSensorStatus = 'disconnected';
+    this.state.lastPulseTimestamp = 0;
+    this.state.lastECGTimestamp = 0;
     if (this.ecgCanvas) {
       this.ecgCanvas.realECGQueue = [];
+      this.ecgCanvas.setStreamActive(false, false);
     }
   },
 
@@ -4633,11 +4842,14 @@ const App = {
       if (this.state.isDemo) {
         streamHzEl.textContent = 'DEMO 250 Гц • Симуляция';
         streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200';
-      } else if (this.state.deviceState === 'connected_receiving') {
-        streamHzEl.textContent = 'LIVE 250 Гц • Поток активен';
+      } else if (this.state.ecgSensorStatus === 'ok') {
+        streamHzEl.textContent = 'LIVE 250 Гц • AD8232 активен';
         streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200';
+      } else if (this.state.bpm != null) {
+        streamHzEl.textContent = 'MAX30102 активен • Ожидание ЭКГ';
+        streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 border border-teal-200';
       } else if (this.state.isConnected) {
-        streamHzEl.textContent = 'Отведение I • Ожидание сенсора';
+        streamHzEl.textContent = 'Отведение I • Ожидание сенсоров';
         streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200';
       } else {
         streamHzEl.textContent = 'Отведение I • Ожидание';
@@ -4648,21 +4860,30 @@ const App = {
     // 2. Статус связи в карточке мониторинга
     const devDot = document.getElementById('home-device-status-dot');
     const devDesc = document.getElementById('home-device-status-desc');
+    const hasPulse = this.state.bpm != null && this.state.spo2 != null;
+    const hasECG = this.state.ecgSensorStatus === 'ok';
+
     if (devDot) {
       devDot.className = this.state.isDemo 
         ? 'w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse'
-        : (this.state.deviceState === 'connected_receiving' 
+        : ((hasPulse || hasECG)
             ? 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse' 
             : (this.state.isConnected ? 'w-2.5 h-2.5 rounded-full bg-sky-500' : 'w-2.5 h-2.5 rounded-full bg-slate-300'));
     }
     if (devDesc) {
-      devDesc.textContent = this.state.isDemo
-        ? 'Генерация виртуальных биосигналов для тестирования'
-        : (this.state.deviceState === 'connected_receiving'
-            ? `Браслет ${this.state.deviceName || 'Qamqor_Band'} • Приём телеметрии активен`
-            : (this.state.isConnected 
-                ? 'Браслет подключён • Приложите палец к MAX30102' 
-                : 'Непрерывный замер биосигналов и контроль кардио-динамики'));
+      if (this.state.isDemo) {
+        devDesc.textContent = 'Генерация виртуальных биосигналов для тестирования';
+      } else if (hasPulse && hasECG) {
+        devDesc.textContent = `Браслет ${this.state.deviceName || 'Qamqor_Band'} • MAX30102 и AD8232 активны`;
+      } else if (hasPulse) {
+        devDesc.textContent = `Браслет ${this.state.deviceName || 'Qamqor_Band'} • Пульс/SpO2 активны (ЭКГ ожидает контакта)`;
+      } else if (hasECG) {
+        devDesc.textContent = `Браслет ${this.state.deviceName || 'Qamqor_Band'} • ЭКГ активна (Приложите палец к MAX30102)`;
+      } else if (this.state.isConnected) {
+        devDesc.textContent = 'Браслет подключён • Ожидание контакта с датчиками';
+      } else {
+        devDesc.textContent = 'Непрерывный замер биосигналов и контроль кардио-динамики';
+      }
     }
 
     // 3. ЧСС (Пульс)
@@ -4674,12 +4895,22 @@ const App = {
         : (this.state.bpm != null ? this.state.bpm : '—');
     }
     if (bpmStatus) {
-      bpmStatus.textContent = this.state.isDemo
-        ? 'Норма покоя (симуляция)'
-        : (this.state.bpm != null ? 'Телеметрия с датчика' : 'Ожидание измерений');
-      bpmStatus.className = (this.state.isDemo || this.state.bpm != null)
-        ? 'text-[10px] text-emerald-700 font-medium'
-        : 'text-[10px] text-slate-400 font-medium';
+      if (this.state.isDemo) {
+        bpmStatus.textContent = 'Норма покоя (симуляция)';
+        bpmStatus.className = 'text-[10px] text-emerald-700 font-medium';
+      } else if (this.state.bpm != null) {
+        bpmStatus.textContent = 'Телеметрия MAX30102';
+        bpmStatus.className = 'text-[10px] text-emerald-700 font-medium';
+      } else if (this.state.pulseSensorStatus === 'no_finger') {
+        bpmStatus.textContent = 'Приложите палец';
+        bpmStatus.className = 'text-[10px] text-amber-600 font-medium';
+      } else if (this.state.pulseSensorStatus === 'calculating') {
+        bpmStatus.textContent = 'Калибровка...';
+        bpmStatus.className = 'text-[10px] text-sky-600 font-medium';
+      } else {
+        bpmStatus.textContent = 'Ожидание измерений';
+        bpmStatus.className = 'text-[10px] text-slate-400 font-medium';
+      }
     }
 
     // 4. SpO2 (Кислород)
@@ -4691,12 +4922,19 @@ const App = {
         : (this.state.spo2 != null ? `${this.state.spo2}%` : '—');
     }
     if (spo2Status) {
-      spo2Status.textContent = this.state.isDemo
-        ? 'Физиологический оптимум'
-        : (this.state.spo2 != null ? (this.state.spo2 >= 95 ? 'Оптимальная сатурация' : 'Снижение SpO2') : 'Ожидание сатурации');
-      spo2Status.className = (this.state.isDemo || this.state.spo2 != null)
-        ? (this.state.spo2 != null && this.state.spo2 < 95 ? 'text-[10px] text-amber-600 font-medium' : 'text-[10px] text-emerald-700 font-medium')
-        : 'text-[10px] text-slate-400 font-medium';
+      if (this.state.isDemo) {
+        spo2Status.textContent = 'Физиологический оптимум';
+        spo2Status.className = 'text-[10px] text-emerald-700 font-medium';
+      } else if (this.state.spo2 != null) {
+        spo2Status.textContent = this.state.spo2 >= 95 ? 'Оптимальная сатурация' : 'Снижение SpO2';
+        spo2Status.className = this.state.spo2 < 95 ? 'text-[10px] text-amber-600 font-medium' : 'text-[10px] text-emerald-700 font-medium';
+      } else if (this.state.pulseSensorStatus === 'no_finger') {
+        spo2Status.textContent = 'Нет контакта';
+        spo2Status.className = 'text-[10px] text-amber-600 font-medium';
+      } else {
+        spo2Status.textContent = 'Ожидание сатурации';
+        spo2Status.className = 'text-[10px] text-slate-400 font-medium';
+      }
     }
 
     // 5. HRV (SDNN)
@@ -4710,7 +4948,7 @@ const App = {
     if (sdnnStatus) {
       sdnnStatus.textContent = this.state.isDemo
         ? 'Вегетативный баланс'
-        : (this.state.sdnn != null ? 'Вариабельность ритма' : 'Ожидание замеров');
+        : (this.state.sdnn != null ? 'Вариабельность ритма' : (hasECG ? 'Накопление RR-интервалов' : 'Ожидание замеров'));
       sdnnStatus.className = (this.state.isDemo || this.state.sdnn != null)
         ? 'text-[10px] text-teal-700 font-medium'
         : 'text-[10px] text-slate-400 font-medium';
@@ -4718,31 +4956,43 @@ const App = {
 
     // 6. Осциллограф статус-пилл
     const homeEcgPill = document.getElementById('home-ecg-status-pill');
+    const liveEcgPill = document.getElementById('ecg-status-pill');
     const homeEcgDot = document.getElementById('home-ecg-live-dot');
     const homeEcgEmpty = document.getElementById('home-ecg-empty-state');
-    if (homeEcgPill) {
+    const liveEcgEmpty = document.getElementById('ecg-empty-state');
+
+    const updatePill = (pill) => {
+      if (!pill) return;
       if (this.state.isDemo) {
-        homeEcgPill.textContent = 'DEMO 250 Гц';
-        homeEcgPill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-mono font-medium';
-      } else if (this.state.deviceState === 'connected_receiving') {
-        homeEcgPill.textContent = 'LIVE 250 Гц';
-        homeEcgPill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-medium';
+        pill.textContent = 'DEMO 250 Гц';
+        pill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-mono font-medium';
+      } else if (hasECG) {
+        pill.textContent = 'LIVE 250 Гц';
+        pill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono font-medium';
+      } else if (this.state.isConnected) {
+        pill.textContent = 'Ожидание ЭКГ';
+        pill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-sky-50 text-sky-800 border border-sky-200 font-mono font-medium';
       } else {
-        homeEcgPill.textContent = 'Ожидание';
-        homeEcgPill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-mono font-medium';
+        pill.textContent = 'Ожидание';
+        pill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-mono font-medium';
       }
-    }
+    };
+    updatePill(homeEcgPill);
+    updatePill(liveEcgPill);
+
     if (homeEcgDot) {
-      homeEcgDot.className = (this.state.isDemo || this.state.deviceState === 'connected_receiving')
+      homeEcgDot.className = (this.state.isDemo || hasECG)
         ? 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse'
         : 'w-2.5 h-2.5 rounded-full bg-slate-300';
     }
+    const isEcgLive = this.state.isDemo || hasECG;
     if (homeEcgEmpty) {
-      if (this.state.isDemo || this.state.deviceState === 'connected_receiving') {
-        homeEcgEmpty.classList.add('hidden');
-      } else {
-        homeEcgEmpty.classList.remove('hidden');
-      }
+      if (isEcgLive) homeEcgEmpty.classList.add('hidden');
+      else homeEcgEmpty.classList.remove('hidden');
+    }
+    if (liveEcgEmpty) {
+      if (isEcgLive) liveEcgEmpty.classList.add('hidden');
+      else liveEcgEmpty.classList.remove('hidden');
     }
 
     // 7. Скрытые селекторы совместимости
@@ -5624,29 +5874,54 @@ const App = {
     } else if (this.state.isConnected) {
       if (demoBar) demoBar.classList.add('hidden');
 
-      if (this.state.deviceState === 'connected_receiving') {
+      const hasPulse = this.state.bpm != null && this.state.spo2 != null;
+      const hasECG = this.state.ecgSensorStatus === 'ok';
+
+      if (hasPulse && hasECG) {
         if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
-        if (label) label.textContent = 'Подключено (BLE)';
+        if (label) label.textContent = 'Подключено (MAX30102 + AD8232)';
         if (realBar) realBar.classList.add('hidden');
         if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
-        if (sLabel) sLabel.textContent = `${this.state.deviceName || 'Qamqor Band'} • Поток данных`;
+        if (sLabel) sLabel.textContent = `${this.state.deviceName || 'Qamqor Band'} • Поток активен`;
         if (sBadge) {
           sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-medium';
-          sBadge.textContent = 'Активен';
+          sBadge.textContent = 'Оба датчика';
         }
         if (sensorStatusText) sensorStatusText.textContent = 'Датчики MAX30102 и AD8232 активны';
+      } else if (hasPulse) {
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+        if (label) label.textContent = 'Подключено (MAX30102)';
+        if (realBar) realBar.classList.add('hidden');
+        if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+        if (sLabel) sLabel.textContent = `${this.state.deviceName || 'Qamqor Band'} • Пульс/SpO2`;
+        if (sBadge) {
+          sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200 text-[10px] font-medium';
+          sBadge.textContent = 'Пульсоксиметр';
+        }
+        if (sensorStatusText) sensorStatusText.textContent = 'MAX30102 активен • Ожидание электродов AD8232';
+      } else if (hasECG) {
+        if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+        if (label) label.textContent = 'Подключено (AD8232 ЭКГ)';
+        if (realBar) realBar.classList.add('hidden');
+        if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+        if (sLabel) sLabel.textContent = `${this.state.deviceName || 'Qamqor Band'} • ЭКГ активна`;
+        if (sBadge) {
+          sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-medium';
+          sBadge.textContent = 'ЭКГ LIVE';
+        }
+        if (sensorStatusText) sensorStatusText.textContent = 'ЭКГ активна • Приложите палец к сенсору MAX30102';
       } else {
         // connected_no_data
         if (dot) dot.className = 'w-2 h-2 rounded-full bg-sky-500 animate-pulse';
-        if (label) label.textContent = 'Подключено (нет данных)';
+        if (label) label.textContent = 'Подключено (ожидание)';
         if (realBar) realBar.classList.remove('hidden');
         if (sDot) sDot.className = 'w-2 h-2 rounded-full bg-sky-500 animate-pulse';
-        if (sLabel) sLabel.textContent = `${this.state.deviceName || 'Qamqor Band'} • Ожидание пальца`;
+        if (sLabel) sLabel.textContent = `${this.state.deviceName || 'Qamqor Band'} • Ожидание`;
         if (sBadge) {
           sBadge.className = 'inline-flex items-center space-x-1 px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 text-[10px] font-medium';
           sBadge.textContent = 'Ожидание';
         }
-        if (sensorStatusText) sensorStatusText.textContent = 'Ожидание контакта с датчиком MAX30102';
+        if (sensorStatusText) sensorStatusText.textContent = 'Ожидание контакта с датчиками MAX30102 / AD8232';
       }
     } else {
       if (demoBar) demoBar.classList.add('hidden');
@@ -5989,12 +6264,17 @@ const App = {
     const isDemo = this.state.isDemo;
     const c = this.state.qualityResult ? this.state.qualityResult.c : 0;
     const hasData = this.state.bpm != null && this.state.spo2 != null;
+    const hasECG = this.state.ecgSensorStatus === 'ok';
 
     if (connText) {
       if (isDemo) {
         connText.innerHTML = '<span class="text-teal-800 font-bold">● Демо-режим активен</span>';
+      } else if (isConnected && hasData && hasECG) {
+        connText.innerHTML = `<span class="text-emerald-800 font-bold">● Подключен • MAX30102 (${this.state.bpm} уд/мин) + AD8232 (ЭКГ LIVE)</span>`;
       } else if (isConnected && hasData) {
         connText.innerHTML = `<span class="text-emerald-800 font-bold">● Подключен • ЧСС: ${this.state.bpm} уд/мин, SpO2: ${this.state.spo2}%</span>`;
+      } else if (isConnected && hasECG) {
+        connText.innerHTML = `<span class="text-emerald-800 font-bold">● Подключен • AD8232: ЭКГ активна (ожидание пальца на MAX30102)</span>`;
       } else if (isConnected) {
         connText.innerHTML = '<span class="text-emerald-800 font-bold">● Подключен по Bluetooth (ожидание данных)</span>';
       } else {
@@ -6003,8 +6283,8 @@ const App = {
     }
 
     if (qualityText) {
-      if (isDemo || hasData || c >= 0.5) {
-        qualityText.innerHTML = `<span class="text-emerald-800 font-bold">Стабилен (100% сигнал датчика)</span>`;
+      if (isDemo || hasData || hasECG || c >= 0.5) {
+        qualityText.innerHTML = `<span class="text-emerald-800 font-bold">Стабилен (сигнал датчиков)</span>`;
       } else if (isConnected) {
         qualityText.innerHTML = `<span class="text-amber-800 font-bold">Ожидание контакта</span>`;
       } else {
@@ -6015,19 +6295,29 @@ const App = {
     if (hintText) {
       if (isDemo) {
         hintText.innerHTML = '✅ <b>Демонстрация активна:</b> виртуальные датчики генерируют корректный физиологический сигнал для проверки.';
+      } else if (isConnected && hasData && hasECG) {
+        hintText.innerHTML = `✅ <b>Оба датчика работают:</b> пульс ${this.state.bpm} уд/мин, SpO2 ${this.state.spo2}%, кривая ЭКГ считывается в реальном времени.`;
       } else if (isConnected && hasData) {
-        hintText.innerHTML = `✅ <b>Реальные данные поступают:</b> пульс ${this.state.bpm} уд/мин, SpO2 ${this.state.spo2}%. Данные передаются на дашборд.`;
+        hintText.innerHTML = `✅ <b>Реальные данные пульсоксиметра:</b> пульс ${this.state.bpm} уд/мин, SpO2 ${this.state.spo2}%.`;
+      } else if (isConnected && hasECG) {
+        hintText.innerHTML = `✅ <b>Сигнал ЭКГ активен:</b> для расчета кардио-риска приложите палец к сенсору MAX30102.`;
       } else if (isConnected) {
-        hintText.innerHTML = 'ℹ️ <b>Браслет на связи:</b> приложите палец к датчику MAX30102 для считывания пульса и сатурации.';
+        hintText.innerHTML = 'ℹ️ <b>Браслет на связи:</b> приложите палец к датчику MAX30102 или подключите электроды AD8232.';
       } else {
         hintText.innerHTML = '💡 Нажмите «Подключить по Bluetooth» или «Запустить в демо-режиме» для проверки биосигналов.';
       }
     }
 
     if (metricsRow && metricsText) {
-      if (hasData) {
+      if (hasData && hasECG) {
+        metricsRow.classList.remove('hidden');
+        metricsText.textContent = `ЧСС: ${this.state.bpm} уд/мин | SpO2: ${this.state.spo2}% | ЭКГ: LIVE`;
+      } else if (hasData) {
         metricsRow.classList.remove('hidden');
         metricsText.textContent = `ЧСС: ${this.state.bpm} уд/мин | SpO2: ${this.state.spo2}%`;
+      } else if (hasECG) {
+        metricsRow.classList.remove('hidden');
+        metricsText.textContent = `ЭКГ: LIVE 250 Гц | ЧСС/SpO2: ожидание контакта`;
       } else {
         metricsRow.classList.add('hidden');
       }
@@ -6430,6 +6720,44 @@ const App = {
       }
       if (btnReal) btnReal.className = activeBtnClass;
       if (btnDemo) btnDemo.className = inactiveBtnClass;
+    }
+
+    // Тема оформления — подсвечиваем активную кнопку
+    const currentTheme = StorageService.getTheme() || 'light';
+    const themeActiveCls  = 'py-2.5 px-3 rounded-xl border-2 border-teal-700 bg-teal-700 text-white text-xs font-bold text-center shadow-xs transition';
+    const themeInactiveCls = 'py-2.5 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-semibold text-center hover:bg-slate-50 transition';
+    ['light', 'white', 'dark'].forEach(t => {
+      const btn = document.getElementById('btn-theme-' + t);
+      if (btn) btn.className = (currentTheme === t) ? themeActiveCls : themeInactiveCls;
+    });
+  },
+
+  // ========================================================
+  // ТЕМА ОФОРМЛЕНИЯ
+  // ========================================================
+  applyTheme(theme) {
+    const valid = ['light', 'white', 'dark'];
+    if (!valid.includes(theme)) theme = 'light';
+
+    const html = document.documentElement;
+    html.classList.remove('theme-light', 'theme-white', 'theme-dark');
+    html.classList.add('theme-' + theme);
+
+    StorageService.setTheme(theme);
+
+    // Обновляем кнопки темы если вкладка открыта
+    const currentTheme = theme;
+    const themeActiveCls  = 'py-2.5 px-3 rounded-xl border-2 border-teal-700 bg-teal-700 text-white text-xs font-bold text-center shadow-xs transition';
+    const themeInactiveCls = 'py-2.5 px-3 rounded-xl border border-slate-200 bg-white text-slate-700 text-xs font-semibold text-center hover:bg-slate-50 transition';
+    ['light', 'white', 'dark'].forEach(t => {
+      const btn = document.getElementById('btn-theme-' + t);
+      if (btn) btn.className = (currentTheme === t) ? themeActiveCls : themeInactiveCls;
+    });
+
+    // Показываем тост
+    const names = { light: 'Клиническая', white: 'Белая', dark: 'Тёмная' };
+    if (typeof this.showToast === 'function') {
+      this.showToast(`Тема изменена: ${names[theme]}`, 'success');
     }
   },
 

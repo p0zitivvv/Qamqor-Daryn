@@ -57,6 +57,7 @@ const STORAGE_KEYS = {
   IS_DEMO: 'qamqor_v3_is_demo',
   DEVICE_ALIAS: 'qamqor_v3_device_alias',
   SOS_ENDPOINT: 'qamqor_v3_sos_endpoint',
+  THEME: 'qamqor_v3_theme',
   COMPLETED_ACTIONS: 'qamqor_v3_completed_actions',
   AI_ADVISOR_CACHE_REAL: 'qamqor_v3_ai_cache_real',
   AI_ADVISOR_CACHE_DEMO: 'qamqor_v3_ai_cache_demo',
@@ -207,6 +208,16 @@ export const StorageService = {
   setSOSEndpoint(url) {
     
     safeSetItem(STORAGE_KEYS.SOS_ENDPOINT, url);
+  },
+
+  getTheme() {
+    return safeGetItem(STORAGE_KEYS.THEME) || 'light';
+  },
+
+  setTheme(theme) {
+    if (!['light', 'white', 'dark'].includes(theme)) theme = 'light';
+    safeSetItem(STORAGE_KEYS.THEME, theme);
+    return theme;
   },
 
   // ========================================================
