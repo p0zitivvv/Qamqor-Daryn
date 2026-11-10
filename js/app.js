@@ -515,13 +515,13 @@ export const App = {
     this.state.lDynResult = null;
     this.state.modelEvaluation = null;
     this.state.qualityResult = null;
-    this.state.pulseSensorStatus = 'disconnected';
-    this.state.ecgSensorStatus = 'disconnected';
+    this.state.pulseSensorStatus = this.state.isConnected ? 'waiting' : 'disconnected';
+    this.state.ecgSensorStatus = this.state.isConnected ? 'waiting' : 'disconnected';
     this.state.lastPulseTimestamp = 0;
     this.state.lastECGTimestamp = 0;
     if (this.ecgCanvas) {
       this.ecgCanvas.realECGQueue = [];
-      this.ecgCanvas.setStreamActive(false, false);
+      this.ecgCanvas.setStreamActive(this.state.isConnected, false);
     }
   },
 

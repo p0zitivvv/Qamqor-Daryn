@@ -228,3 +228,48 @@ test('12. ПОЛНОЕ ОТКЛЮЧЕНИЕ BLE: очистка всех акт�
   assert.equal(lastTelemetry.ecg, null);
   assert.equal(lastTelemetry.hasValidSensors, false);
 });
+
+test('13. BLE ПОДКЛЮЧЕН, НО УВЕДОМЛЕНИЯ ЕЩЕ НЕ ПОСТУПАЮТ: статус ожидания без фиктивных значений', () => {
+  const ble = new BLEService();
+  let telemetry = null;
+  ble.onTelemetry = (t) => { telemetry = t; };
+
+  // При подключении до прихода первого пакета
+  ble.emitEmptyTelemetry('connected_no_data');
+
+  assert.ok(telemetry);
+  assert.equal(telemetry.bpm, null, 'До прихода пакета пульс строго null');
+  assert.equal(telemetry.spo2, null, 'До прихода пакета SpO2 строго null');
+  assert.equal(telemetry.ecg, null, 'До прихода пакета ЭКГ строго null');
+  assert.equal(telemetry.pulseSensorStatus, 'waiting', 'Статус пульсоксиметра должен быть waiting');
+  assert.equal(telemetry.ecgSensorStatus, 'waiting', 'Статус ЭКГ должен быть waiting');
+  assert.equal(telemetry.hasValidSensors, false);
+});
+
+test('14. ПРЕКРАЩЕНИЕ ПЕРЕДАЧИ ДАТЧИКА: сброс в null при потере контакта без подмены демо-данными', () => {
+  const ble = new BLEService();
+  const history = [];
+  ble.onTelemetry = (t) => { history.push(t); };
+
+  // 1. Полноценная передача
+  ble.handlePacket('{"bpm":78,"spo2":97,"ecg":1950,"lo":0}');
+  assert.equal(history[0].bpm, 78);
+  assert.equal(history[0].ecg, 1950);
+
+  // 2. Пользователь убрал палец (irValue < 10000 -> bpm:0, spo2:0), но ЭКГ продолжается
+  ble.handlePacket('{"bpm":0,"spo2":0,"ecg":1980,"lo":0}');
+  assert.equal(history[1].bpm, null, 'BPM не должен оставаться 78, а должен стать null');
+  assert.equal(history[1].spo2, null, 'SpO2 должен стать null');
+  assert.equal(history[1].ecg, 1980, 'ЭКГ продолжает поступать');
+  assert.equal(history[1].pulseSensorStatus, 'no_finger');
+  assert.equal(history[1].ecgSensorStatus, 'ok');
+
+  // 3. Электроды сняты (lo:1)
+  ble.handlePacket('{"bpm":0,"spo2":0,"ecg":2048,"lo":1}');
+  assert.equal(history[2].bpm, null);
+  assert.equal(history[2].spo2, null);
+  assert.equal(history[2].ecg, null);
+  assert.equal(history[2].pulseSensorStatus, 'no_finger');
+  assert.equal(history[2].ecgSensorStatus, 'leads_off');
+  assert.equal(history[2].hasValidSensors, false);
+});

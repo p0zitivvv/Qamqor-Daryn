@@ -13,6 +13,7 @@ export class ECGCanvasService {
     this.currentBpm = 72;
     this.realECGQueue = [];
     this.allowSynthetic = false;
+    this.lastRealSampleTime = 0;
   }
 
   init(canvasConfigs) {
@@ -54,7 +55,8 @@ export class ECGCanvasService {
       if (!item.emptyState) item.emptyState = document.getElementById(item.id === 'homeECGCanvas' ? 'home-ecg-empty-state' : 'ecg-empty-state');
       if (!item.statusPill) item.statusPill = document.getElementById(item.id === 'homeECGCanvas' ? 'home-ecg-status-pill' : 'ecg-status-pill');
       
-      const hasLiveStream = active && (this.allowSynthetic || this.realECGQueue.length > 0);
+      const isRecentlyActive = this.allowSynthetic || (this.lastRealSampleTime > 0 && (performance.now() - this.lastRealSampleTime < 3500)) || this.realECGQueue.length > 0;
+      const hasLiveStream = active && isRecentlyActive;
       if (item.emptyState) {
         if (hasLiveStream) item.emptyState.classList.add('hidden');
         else item.emptyState.classList.remove('hidden');
@@ -66,7 +68,7 @@ export class ECGCanvasService {
         } else if (this.allowSynthetic) {
           item.statusPill.textContent = 'ДЕМО 250 Гц';
           item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-mono font-semibold';
-        } else if (this.realECGQueue.length > 0) {
+        } else if (isRecentlyActive) {
           item.statusPill.textContent = 'LIVE 250 Гц';
           item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-semibold';
         } else {
@@ -87,6 +89,7 @@ export class ECGCanvasService {
     // Нормализация 12-битного ADC (0..4095) в диапазон [-1, 1] относительно центра 2048
     const normalized = (adcValue - 2048) / 1024.0;
     this.realECGQueue.push(normalized);
+    this.lastRealSampleTime = performance.now();
     if (this.realECGQueue.length > 500) {
       this.realECGQueue.shift();
     }
@@ -191,9 +194,28 @@ export class ECGCanvasService {
         item.sweepX = (item.sweepX + 2) % w;
 
         // Обновляем видимость заглушки при появлении реального потока
+        const isRecentlyActive = this.allowSynthetic || (this.lastRealSampleTime > 0 && (performance.now() - this.lastRealSampleTime < 3500)) || this.realECGQueue.length > 0;
         if (item.emptyState) {
-          if (hasSample) item.emptyState.classList.add('hidden');
-          else item.emptyState.classList.remove('hidden');
+          if (this.hasStream && isRecentlyActive) {
+            item.emptyState.classList.add('hidden');
+          } else {
+            item.emptyState.classList.remove('hidden');
+          }
+        }
+        if (item.statusPill) {
+          if (!this.hasStream) {
+            item.statusPill.textContent = 'Ожидание';
+            item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 font-medium';
+          } else if (this.allowSynthetic) {
+            item.statusPill.textContent = 'ДЕМО 250 Гц';
+            item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-mono font-semibold';
+          } else if (isRecentlyActive) {
+            item.statusPill.textContent = 'LIVE 250 Гц';
+            item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-semibold';
+          } else {
+            item.statusPill.textContent = 'Ожидание ЭКГ';
+            item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 font-mono font-medium';
+          }
         }
       }
 

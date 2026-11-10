@@ -517,6 +517,10 @@ export class BLEService {
       const cleanChunk = rawChunk.replace(/\0/g, '').replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
       this.packetBuffer += cleanChunk;
 
+      if (cleanChunk) {
+        console.log(`%c[QAMQOR BLE] 📥 Пакет #${this.packetCount}: ${cleanChunk}`, 'color: #0F766E; font-weight: bold;');
+      }
+
       // Защита от переполнения буфера (сохраняем хвост)
       if (this.packetBuffer.length > 4096) {
         this.packetBuffer = this.packetBuffer.slice(-1024);
@@ -730,11 +734,7 @@ export class BLEService {
         const q = checkECGSignalQuality(sample, false);
         latestEcgQuality = q;
 
-        // Если датчик AD8232 висит на ровной изолинии 2048 (не подключен)
-        if (sample === 2048 && ecgSamples.length === 1 && !json.samples) {
-          // Изолиния без динамики
-          currentEcgStatus = 'leads_off';
-        } else if (!q.isValid && q.isClipped) {
+        if (!q.isValid && q.isClipped) {
           currentEcgStatus = 'clipped';
         } else if (q.isValid) {
           anyValid = true;

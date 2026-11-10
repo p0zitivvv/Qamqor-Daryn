@@ -4699,6 +4699,10 @@ class BLEService {
       const cleanChunk = rawChunk.replace(/\0/g, '').replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
       this.packetBuffer += cleanChunk;
 
+      if (cleanChunk) {
+        console.log(`%c[QAMQOR BLE] 📥 Пакет #${this.packetCount}: ${cleanChunk}`, 'color: #0F766E; font-weight: bold;');
+      }
+
       // Защита от переполнения буфера (сохраняем хвост)
       if (this.packetBuffer.length > 4096) {
         this.packetBuffer = this.packetBuffer.slice(-1024);
@@ -4912,11 +4916,7 @@ class BLEService {
         const q = checkECGSignalQuality(sample, false);
         latestEcgQuality = q;
 
-        // Если датчик AD8232 висит на ровной изолинии 2048 (не подключен)
-        if (sample === 2048 && ecgSamples.length === 1 && !json.samples) {
-          // Изолиния без динамики
-          currentEcgStatus = 'leads_off';
-        } else if (!q.isValid && q.isClipped) {
+        if (!q.isValid && q.isClipped) {
           currentEcgStatus = 'clipped';
         } else if (q.isValid) {
           anyValid = true;
@@ -5167,6 +5167,7 @@ class ECGCanvasService {
     this.currentBpm = 72;
     this.realECGQueue = [];
     this.allowSynthetic = false;
+    this.lastRealSampleTime = 0;
   }
 
   init(canvasConfigs) {
@@ -5208,7 +5209,8 @@ class ECGCanvasService {
       if (!item.emptyState) item.emptyState = document.getElementById(item.id === 'homeECGCanvas' ? 'home-ecg-empty-state' : 'ecg-empty-state');
       if (!item.statusPill) item.statusPill = document.getElementById(item.id === 'homeECGCanvas' ? 'home-ecg-status-pill' : 'ecg-status-pill');
       
-      const hasLiveStream = active && (this.allowSynthetic || this.realECGQueue.length > 0);
+      const isRecentlyActive = this.allowSynthetic || (this.lastRealSampleTime > 0 && (performance.now() - this.lastRealSampleTime < 3500)) || this.realECGQueue.length > 0;
+      const hasLiveStream = active && isRecentlyActive;
       if (item.emptyState) {
         if (hasLiveStream) item.emptyState.classList.add('hidden');
         else item.emptyState.classList.remove('hidden');
@@ -5220,7 +5222,7 @@ class ECGCanvasService {
         } else if (this.allowSynthetic) {
           item.statusPill.textContent = 'ДЕМО 250 Гц';
           item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-mono font-semibold';
-        } else if (this.realECGQueue.length > 0) {
+        } else if (isRecentlyActive) {
           item.statusPill.textContent = 'LIVE 250 Гц';
           item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-semibold';
         } else {
@@ -5241,6 +5243,7 @@ class ECGCanvasService {
     // Нормализация 12-битного ADC (0..4095) в диапазон [-1, 1] относительно центра 2048
     const normalized = (adcValue - 2048) / 1024.0;
     this.realECGQueue.push(normalized);
+    this.lastRealSampleTime = performance.now();
     if (this.realECGQueue.length > 500) {
       this.realECGQueue.shift();
     }
@@ -5345,9 +5348,28 @@ class ECGCanvasService {
         item.sweepX = (item.sweepX + 2) % w;
 
         // Обновляем видимость заглушки при появлении реального потока
+        const isRecentlyActive = this.allowSynthetic || (this.lastRealSampleTime > 0 && (performance.now() - this.lastRealSampleTime < 3500)) || this.realECGQueue.length > 0;
         if (item.emptyState) {
-          if (hasSample) item.emptyState.classList.add('hidden');
-          else item.emptyState.classList.remove('hidden');
+          if (this.hasStream && isRecentlyActive) {
+            item.emptyState.classList.add('hidden');
+          } else {
+            item.emptyState.classList.remove('hidden');
+          }
+        }
+        if (item.statusPill) {
+          if (!this.hasStream) {
+            item.statusPill.textContent = 'Ожидание';
+            item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200 font-medium';
+          } else if (this.allowSynthetic) {
+            item.statusPill.textContent = 'ДЕМО 250 Гц';
+            item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-mono font-semibold';
+          } else if (isRecentlyActive) {
+            item.statusPill.textContent = 'LIVE 250 Гц';
+            item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono font-semibold';
+          } else {
+            item.statusPill.textContent = 'Ожидание ЭКГ';
+            item.statusPill.className = 'text-[10px] px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-200 font-mono font-medium';
+          }
         }
       }
 
@@ -5918,13 +5940,13 @@ const App = {
     this.state.lDynResult = null;
     this.state.modelEvaluation = null;
     this.state.qualityResult = null;
-    this.state.pulseSensorStatus = 'disconnected';
-    this.state.ecgSensorStatus = 'disconnected';
+    this.state.pulseSensorStatus = this.state.isConnected ? 'waiting' : 'disconnected';
+    this.state.ecgSensorStatus = this.state.isConnected ? 'waiting' : 'disconnected';
     this.state.lastPulseTimestamp = 0;
     this.state.lastECGTimestamp = 0;
     if (this.ecgCanvas) {
       this.ecgCanvas.realECGQueue = [];
-      this.ecgCanvas.setStreamActive(false, false);
+      this.ecgCanvas.setStreamActive(this.state.isConnected, false);
     }
   },
 
