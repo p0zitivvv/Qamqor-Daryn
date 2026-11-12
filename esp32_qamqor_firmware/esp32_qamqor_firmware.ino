@@ -121,8 +121,8 @@ void setup() {
 
   pinMode(AD8232_OUTPUT_PIN, INPUT);
   // ВАЖНО: Используем INPUT_PULLDOWN, чтобы неподключенные пины LO+/LO- не плавали в HIGH
-  pinMode(AD8232_LO_PLUS_PIN, INPUT_PULLDOWN);
-  pinMode(AD8232_LO_MINUS_PIN, INPUT_PULLDOWN);
+  pinMode(AD8232_LO_PLUS_PIN, INPUT);
+  pinMode(AD8232_LO_MINUS_PIN, INPUT);
   Serial.printf("[AD8232] Пины настроены: Output=GPIO%d, LO+=GPIO%d, LO-=GPIO%d\n",
                 AD8232_OUTPUT_PIN, AD8232_LO_PLUS_PIN, AD8232_LO_MINUS_PIN);
 
