@@ -588,8 +588,24 @@ export class BLEService {
         }
       }
 
-      // Если полных фигурных скобок не найдено, но в буфере есть готовые числа
+      // Если полных фигурных скобок не найдено
       if (parsedObjects.length === 0) {
+        // Если в буфере есть начало объекта '{', но закрывающая скобка ещё не пришла (фрагментация MTU) —
+        // НЕ стираем буфер, а ждем прихода следующих фрагментов!
+        const openBraceIdx = this.packetBuffer.indexOf('{');
+        if (openBraceIdx !== -1) {
+          // Отрезаем возможный мусор ДО открывающей фигурной скобки
+          if (openBraceIdx > 0) {
+            this.packetBuffer = this.packetBuffer.substring(openBraceIdx);
+          }
+          // Если буфер аномально разросся без закрывающей скобки (> 2048 байт), обрезаем поврежденный хвост
+          if (this.packetBuffer.length > 2048) {
+            this.packetBuffer = this.packetBuffer.slice(-512);
+          }
+          return;
+        }
+
+        // Если же в буфере вообще нет фигурных скобок, но есть plain-text пары ключ:значение
         const hrM = this.packetBuffer.match(/(?:heartRate|heart_rate|bpm|hr)\s*[:=]\s*(\d+)/i);
         const spM = this.packetBuffer.match(/(?:spo2|o2|oximeter)\s*[:=]\s*(\d+)/i);
         const ecgM = this.packetBuffer.match(/(?:ecg|raw_ecg|adc)\s*[:=]\s*(\d+)/i);
@@ -649,36 +665,41 @@ export class BLEService {
     const rawBpm = json.heartRate != null ? Number(json.heartRate) : (json.bpm != null ? Number(json.bpm) : (json.hr != null ? Number(json.hr) : null));
     const rawSpo2 = json.spo2 != null ? Number(json.spo2) : (json.o2 != null ? Number(json.o2) : null);
 
-    const isExplicitPulseNoData = ['no_finger', 'calculating', 'sensor_error', 'initializing'].includes(rawStatus);
+    const isExplicitNoFinger = (
+      rawStatus === 'no_finger' ||
+      (Number.isFinite(rawBpm) && rawBpm <= 0) ||
+      (Number.isFinite(rawSpo2) && rawSpo2 <= 0)
+    );
 
-    if (rawStatus === 'no_finger') {
+    if (isExplicitNoFinger) {
+      // Палец физически снят с сенсора: мгновенный сброс, запрет удержания старых значений
       currentPulseStatus = 'no_finger';
       this.lastValidPulse = null;
+      this.lastPulseTime = null;
+      hasActivePulse = false;
+      validatedBpm = null;
+      validatedSpo2 = null;
+      pulseValidation = { isValid: false, bpm: null, spo2: null, reason: 'Нет контакта с пальцем (MAX30102)' };
     } else if (rawStatus === 'calculating') {
       currentPulseStatus = 'calculating';
     } else if (rawStatus === 'sensor_error') {
       currentPulseStatus = 'sensor_error';
       this.lastValidPulse = null;
+      this.lastPulseTime = null;
     } else if (rawStatus === 'initializing') {
       currentPulseStatus = 'initializing';
-    } else if (Number.isFinite(rawBpm) && Number.isFinite(rawSpo2)) {
-      if (rawBpm <= 0 || rawSpo2 <= 0) {
-        // Датчик физически не зафиксировал палец (прошивка шлет 0 при отсутствии контакта)
-        currentPulseStatus = 'no_finger';
-        this.lastValidPulse = null;
+    } else if (Number.isFinite(rawBpm) && rawBpm > 0 && Number.isFinite(rawSpo2) && rawSpo2 > 0) {
+      const valRes = validatePulseOximetry(rawBpm, rawSpo2);
+      pulseValidation = valRes;
+      if (valRes && valRes.isValid) {
+        currentPulseStatus = 'ok';
+        hasActivePulse = true;
+        validatedBpm = valRes.bpm;
+        validatedSpo2 = valRes.spo2;
+        this.lastPulseTime = now;
+        this.lastValidPulse = { bpm: validatedBpm, spo2: validatedSpo2, timestamp: now };
       } else {
-        const valRes = validatePulseOximetry(rawBpm, rawSpo2);
-        pulseValidation = valRes;
-        if (valRes && valRes.isValid) {
-          currentPulseStatus = 'ok';
-          hasActivePulse = true;
-          validatedBpm = valRes.bpm;
-          validatedSpo2 = valRes.spo2;
-          this.lastPulseTime = now;
-          this.lastValidPulse = { bpm: validatedBpm, spo2: validatedSpo2, timestamp: now };
-        } else {
-          currentPulseStatus = 'invalid';
-        }
+        currentPulseStatus = 'invalid';
       }
     } else {
       // В этом конкретном пакете данных MAX30102 нет (например, выделенный ЭКГ-пакет)
@@ -690,7 +711,7 @@ export class BLEService {
         validatedSpo2 = this.lastValidPulse.spo2;
         pulseValidation = { isValid: true, bpm: validatedBpm, spo2: validatedSpo2 };
       } else {
-        currentPulseStatus = isExplicitPulseNoData ? rawStatus : (this.pulseSensorStatus === 'disconnected' ? 'disconnected' : 'waiting');
+        currentPulseStatus = this.pulseSensorStatus === 'disconnected' ? 'disconnected' : 'waiting';
       }
     }
 
@@ -715,7 +736,10 @@ export class BLEService {
       json.leads_off === true
     );
 
-    if (Array.isArray(json.samples)) {
+    // Извлечение отсчетов ЭКГ (поддержка массива "ecg", массива "samples" и одиночного "ecg")
+    if (Array.isArray(json.ecg)) {
+      ecgSamples = json.ecg.map(Number).filter(Number.isFinite);
+    } else if (Array.isArray(json.samples)) {
       ecgSamples = json.samples.map(Number).filter(Number.isFinite);
     } else if (Array.isArray(json.ecgSamples)) {
       ecgSamples = json.ecgSamples.map(Number).filter(Number.isFinite);

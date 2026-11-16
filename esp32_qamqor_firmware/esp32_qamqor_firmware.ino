@@ -1,16 +1,29 @@
 /*
  * ==================================================================================
- * МЕДИЦИНСКИЙ СМАРТ-БРАСЛЕТ «QAMQOR» — ESP32 FIRMWARE (PRO DUAL-SENSOR EDITION)
+ * МЕДИЦИНСКИЙ СМАРТ-БРАСЛЕТ «QAMQOR» — ESP32 FULL FIRMWARE
+ * Пульс + SpO2 (MAX30102) + ЭКГ 250 Гц (AD8232) -> BLE
  * ==================================================================================
- * Аппаратная платформа: ESP32 NodeMCU / ESP32-WROOM-32 / DOIT ESP32 DEVKIT V1
  * Датчики:
- *   1. MAX30102 — Оптический пульсоксиметр ЧСС и SpO2 (I2C: SDA=GPIO21, SCL=GPIO22)
- *   2. AD8232   — Электрокардиограф ЭКГ (Аналоговый выход=GPIO36 / VP, LO+=GPIO25, LO-=GPIO26)
+ *   MAX30102 — I2C: SDA=GPIO21, SCL=GPIO22
+ *   AD8232   — OUT=GPIO36 (VP), LO+=GPIO25, LO-=GPIO26
  *
- * Беспроводной протокол: BLE (Bluetooth Low Energy)
+ * Библиотеки (Arduino Library Manager):
+ *   - "SparkFun MAX3010x Pulse and Proximity Sensor Library"
+ *     (даёт MAX30105.h, heartRate.h и spo2_algorithm.h)
+ *   - ESP32 BLE Arduino (входит в ядро ESP32)
+ *
+ * BLE:
  *   Device Name:         Qamqor_Band
  *   Service UUID:        4fafc201-1fb5-459e-8fcc-c5c9c331914b
  *   Characteristic UUID: beb5483e-36e1-4688-b7f5-ea07361b26a8
+ *
+ * Формат пакета (25 пакетов/сек, каждые 40 мс):
+ *   {"bpm":72,"spo2":98,"lo":0,"ecg":[2048,2051,... 10 значений]}
+ *   bpm  = 0 — палец не приложен
+ *   spo2 = 0 — SpO2 ещё не рассчитан (первые ~4 с после касания) или сигнал плохой
+ *
+ * ВАЖНО: SpO2 по алгоритму Maxim — оценочный показатель для проекта/демонстрации,
+ * это не медицинский прибор.
  * ==================================================================================
  */
 
@@ -21,21 +34,37 @@
 #include <BLE2902.h>
 #include "MAX30105.h"
 #include "heartRate.h"
+#include "spo2_algorithm.h"
 
-// --- UUIDs СЕРВИСА И ХАРАКТЕРИСТИКИ ---
+// --- UUIDs ---
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 #define DEVICE_NAME         "Qamqor_Band"
 
-// --- НАЗНАЧЕНИЕ ПИНОВ ---
-#define I2C_SDA_PIN         21  // Шина данных I2C для MAX30102
-#define I2C_SCL_PIN         22  // Тактовая линия I2C для MAX30102
+// --- ПИНЫ ---
+#define I2C_SDA_PIN         21
+#define I2C_SCL_PIN         22
+#define AD8232_OUTPUT_PIN   36
+#define AD8232_LO_PLUS_PIN  25
+#define AD8232_LO_MINUS_PIN 26
 
-#define AD8232_OUTPUT_PIN   36  // VP / GPIO36 (ADC1_CH0) — аналоговый выход ЭКГ
-#define AD8232_LO_PLUS_PIN  25  // Leads Off Detector (+)
-#define AD8232_LO_MINUS_PIN 26  // Leads Off Detector (-)
+// --- ЭКГ (должно совпадать с ble.js: ECG_SAMPLE_RATE_HZ = 250) ---
+#define ECG_SAMPLE_RATE_HZ   250
+#define ECG_SAMPLE_PERIOD_MS (1000 / ECG_SAMPLE_RATE_HZ)   // 4 мс
+#define ECG_SAMPLES_PER_PKT  10                            // 10 * 4 мс = 40 мс
+#define ECG_RING_SIZE        256                           // степень двойки
+#define ECG_RING_MASK        (ECG_RING_SIZE - 1)
 
-// --- ОБЪЕКТЫ ДАТЧИКОВ И BLE ---
+// --- ПУЛЬС / SpO2 ---
+#define FINGER_IR_THRESHOLD  10000    // IR ниже порога = палец не приложен
+#define SPO2_BUF             100      // 4 с при 25 выб/с (100 Гц / усреднение 4)
+#define SPO2_STEP            25       // пересчёт SpO2 раз в секунду
+#define SPO2_AVG_N           4        // сглаживание: среднее последних валидных
+#define SPO2_MIN_VALID       80
+#define SPO2_MAX_VALID       100
+#define SPO2_HOLD_MS         8000     // сколько держать старое значение, если новые невалидны
+
+// --- ОБЪЕКТЫ ---
 MAX30105 particleSensor;
 bool max30102Present = false;
 
@@ -43,213 +72,311 @@ BLEServer* pServer = NULL;
 BLECharacteristic* pCharacteristic = NULL;
 BLE2902* pBLE2902 = NULL;
 
-bool deviceConnected = false;
+volatile bool deviceConnected = false;
 bool oldDeviceConnected = false;
+volatile uint16_t negotiatedMtu = 23;
 
-// --- ТЕЛЕМЕТРИЯ И БИОМЕТРИЯ ---
+// --- ЭКГ: кольцевой буфер (producer = ecgTask, consumer = loop) ---
+volatile uint16_t ecgRing[ECG_RING_SIZE];
+volatile uint32_t ecgHead = 0;
+volatile uint32_t ecgTail = 0;
+volatile bool currentLeadsOff = false;
+volatile uint16_t lastEcgSample = 2048;
+
+// --- ПУЛЬС ---
 uint8_t currentBPM = 0;
-uint8_t currentSpO2 = 0;
-uint16_t currentECG = 2048;
-bool currentLeadsOff = false;
-
 long lastBeat = 0;
 float beatsPerMinute = 0;
 int beatAvg = 0;
 const byte RATE_SIZE = 4;
 byte rates[RATE_SIZE] = {0, 0, 0, 0};
 byte rateSpot = 0;
+long lastIR = 0;
+const unsigned long BPM_TIMEOUT_MS = 8000;
 
-// Таймеры передачи данных и диагностики
-unsigned long lastTelemetrySendTime = 0;
-const unsigned long TELEMETRY_INTERVAL_MS = 50; // 20 Гц — стабильная частота без переполнения BLE стека
+// --- SpO2 ---
+uint8_t currentSpO2 = 0;
+uint32_t irBuf[SPO2_BUF];
+uint32_t redBuf[SPO2_BUF];
+int bufFill = 0;
+int newSamples = 0;
+int32_t spo2Raw = 0;
+int8_t  spo2Valid = 0;
+int32_t hrRaw = 0;
+int8_t  hrValid = 0;
+uint8_t spo2Hist[SPO2_AVG_N];
+uint8_t spo2HistCount = 0;
+uint8_t spo2HistPos = 0;
+unsigned long lastSpo2ValidTime = 0;
+bool fingerWasOn = false;
 
+// --- ДИАГНОСТИКА ---
 unsigned long lastDiagPrintTime = 0;
-const unsigned long DIAG_INTERVAL_MS = 1000;    // Диагностика в Serial раз в 1 сек
-
+const unsigned long DIAG_INTERVAL_MS = 1000;
 unsigned long packetsSentCount = 0;
 unsigned long packetsFailedCount = 0;
+unsigned long ecgOverflowCount = 0;
 
-// --- BLE CALLBACKS СЕРВЕРА ---
-class QamqorServerCallbacks: public BLEServerCallbacks {
-    void onConnect(BLEServer* pServer) {
-      deviceConnected = true;
-      Serial.println("\n=======================================================");
-      Serial.println("[BLE] ✅ КЛИЕНТ ПОДКЛЮЧЕН (Qamqor PWA)");
-      Serial.println("[BLE] Готовность к потоковой передаче телеметрии...");
-      Serial.println("=======================================================\n");
-    };
-
-    void onDisconnect(BLEServer* pServer) {
-      deviceConnected = false;
-      Serial.println("\n[BLE] ⚠️ Клиент отключился от браслета.");
-    }
+// --- BLE CALLBACKS ---
+class QamqorServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* s) {
+    deviceConnected = true;
+    negotiatedMtu = 23;
+    Serial.println("\n[BLE] ✅ КЛИЕНТ ПОДКЛЮЧЕН");
+  }
+  void onDisconnect(BLEServer* s) {
+    deviceConnected = false;
+    Serial.println("\n[BLE] ⚠️ Клиент отключился.");
+  }
+  void onMtuChanged(BLEServer* s, esp_ble_gatts_cb_param_t* param) {
+    negotiatedMtu = param->mtu.mtu;
+    Serial.printf("[BLE] MTU согласован: %u\n", negotiatedMtu);
+  }
 };
 
-// --- BLE CALLBACKS ХАРАКТЕРИСТИКИ ---
-class QamqorCharCallbacks: public BLECharacteristicCallbacks {
-    void onRead(BLECharacteristic* pCharacteristic) {
-      Serial.println("[BLE] Клиент запросил READ характеристики");
+class QamqorCharCallbacks : public BLECharacteristicCallbacks {
+  void onStatus(BLECharacteristic* c, Status s, uint32_t code) {
+    if (s != SUCCESS_NOTIFY && s != SUCCESS_INDICATE) {
+      packetsFailedCount++;
     }
-    void onWrite(BLECharacteristic* pCharacteristic) {
-      Serial.println("[BLE] Клиент выполнил WRITE характеристики");
+  }
+};
+
+// =====================================================================
+// ЗАДАЧА ЭКГ: ровно 250 Гц, независимо от I2C/BLE/расчёта SpO2
+// =====================================================================
+void ecgTask(void* param) {
+  TickType_t lastWake = xTaskGetTickCount();
+  const TickType_t period = pdMS_TO_TICKS(ECG_SAMPLE_PERIOD_MS);
+
+  for (;;) {
+    vTaskDelayUntil(&lastWake, period);
+
+    bool lo = (digitalRead(AD8232_LO_PLUS_PIN) == 1) || (digitalRead(AD8232_LO_MINUS_PIN) == 1);
+    currentLeadsOff = lo;
+
+    uint16_t v = lo ? 2048 : (uint16_t)analogRead(AD8232_OUTPUT_PIN);
+    lastEcgSample = v;
+
+    uint32_t head = ecgHead;
+    ecgRing[head & ECG_RING_MASK] = v;
+    ecgHead = head + 1;
+  }
+}
+
+// =====================================================================
+// SpO2: сброс и расчёт
+// =====================================================================
+void resetPulseOx() {
+  currentBPM = 0;
+  currentSpO2 = 0;
+  lastBeat = 0;
+  for (byte x = 0; x < RATE_SIZE; x++) rates[x] = 0;
+  rateSpot = 0;
+
+  bufFill = 0;
+  newSamples = 0;
+  spo2HistCount = 0;
+  spo2HistPos = 0;
+  lastSpo2ValidTime = 0;
+}
+
+void computeSpO2(unsigned long now) {
+  maxim_heart_rate_and_oxygen_saturation(irBuf, SPO2_BUF, redBuf,
+                                         &spo2Raw, &spo2Valid, &hrRaw, &hrValid);
+
+  if (spo2Valid && spo2Raw >= SPO2_MIN_VALID && spo2Raw <= SPO2_MAX_VALID) {
+    spo2Hist[spo2HistPos] = (uint8_t)spo2Raw;
+    spo2HistPos = (spo2HistPos + 1) % SPO2_AVG_N;
+    if (spo2HistCount < SPO2_AVG_N) spo2HistCount++;
+
+    int sum = 0;
+    for (uint8_t i = 0; i < spo2HistCount; i++) sum += spo2Hist[i];
+    currentSpO2 = (uint8_t)(sum / spo2HistCount);
+    lastSpo2ValidTime = now;
+  } else if (lastSpo2ValidTime > 0 && (now - lastSpo2ValidTime) > SPO2_HOLD_MS) {
+    // Давно нет валидных расчётов — не показываем устаревшее значение
+    currentSpO2 = 0;
+    spo2HistCount = 0;
+    spo2HistPos = 0;
+  }
+}
+
+void processPulseOxSample(uint32_t ir, uint32_t red, unsigned long now) {
+  lastIR = ir;
+
+  if (ir < FINGER_IR_THRESHOLD) {
+    // Палец убран
+    if (fingerWasOn) {
+      resetPulseOx();
+      fingerWasOn = false;
     }
-    void onStatus(BLECharacteristic* pCharacteristic, Status s, uint32_t code) {
-      if (s != SUCCESS_NOTIFY && s != SUCCESS_INDICATE) {
-        packetsFailedCount++;
-        Serial.printf("[BLE] ❌ Ошибка notify (код %d)\n", code);
+    return;
+  }
+  fingerWasOn = true;
+
+  // --- ЧСС по детектору ударов (быстрый отклик) ---
+  if (checkForBeat((long)ir)) {
+    long delta = now - lastBeat;
+    lastBeat = now;
+
+    if (delta > 0) {
+      beatsPerMinute = 60.0 / (delta / 1000.0);
+
+      if (beatsPerMinute >= 40 && beatsPerMinute <= 200) {
+        if (rates[0] == 0) {
+          for (byte x = 0; x < RATE_SIZE; x++) rates[x] = (byte)beatsPerMinute;
+        } else {
+          rates[rateSpot++] = (byte)beatsPerMinute;
+          rateSpot %= RATE_SIZE;
+        }
+        beatAvg = 0;
+        for (byte x = 0; x < RATE_SIZE; x++) beatAvg += rates[x];
+        beatAvg /= RATE_SIZE;
+        currentBPM = (uint8_t)beatAvg;
       }
     }
-};
+  }
+
+  // --- SpO2: скользящее окно 100 выборок, пересчёт каждые 25 ---
+  if (bufFill < SPO2_BUF) {
+    irBuf[bufFill] = ir;
+    redBuf[bufFill] = red;
+    bufFill++;
+    if (bufFill == SPO2_BUF) {
+      computeSpO2(now);
+    }
+  } else {
+    memmove(irBuf, irBuf + 1, (SPO2_BUF - 1) * sizeof(uint32_t));
+    memmove(redBuf, redBuf + 1, (SPO2_BUF - 1) * sizeof(uint32_t));
+    irBuf[SPO2_BUF - 1] = ir;
+    redBuf[SPO2_BUF - 1] = red;
+    newSamples++;
+    if (newSamples >= SPO2_STEP) {
+      newSamples = 0;
+      computeSpO2(now);
+    }
+  }
+}
+
+// =====================================================================
+// ОТПРАВКА ПАКЕТА (с нарезкой по MTU, если MTU не согласован)
+// =====================================================================
+void sendPacket(const uint16_t* samples, uint8_t count, bool lo) {
+  char payload[160];
+  int n = snprintf(payload, sizeof(payload),
+                   "{\"bpm\":%u,\"spo2\":%u,\"lo\":%d,\"ecg\":[",
+                   currentBPM, currentSpO2, lo ? 1 : 0);
+
+  for (uint8_t i = 0; i < count; i++) {
+    n += snprintf(payload + n, sizeof(payload) - n, i ? ",%u" : "%u", samples[i]);
+  }
+  n += snprintf(payload + n, sizeof(payload) - n, "]}");
+
+  uint16_t chunk = negotiatedMtu > 3 ? negotiatedMtu - 3 : 20;
+  if (chunk > 512) chunk = 512;
+
+  if (n <= chunk) {
+    pCharacteristic->setValue((uint8_t*)payload, n);
+    pCharacteristic->notify();
+  } else {
+    for (int off = 0; off < n; off += chunk) {
+      int len = min((int)chunk, n - off);
+      pCharacteristic->setValue((uint8_t*)(payload + off), len);
+      pCharacteristic->notify();
+      delay(3);
+    }
+  }
+  packetsSentCount++;
+}
 
 void setup() {
   Serial.begin(115200);
   delay(500);
+  Serial.println("\n*** QAMQOR BAND FULL — ЧСС + SpO2 + ЭКГ 250 Hz ***");
 
-  Serial.println("\n");
-  Serial.println("*******************************************************");
-  Serial.println("   МЕДИЦИНСКИЙ СМАРТ-БРАСЛЕТ «QAMQOR BAND» — ESP32    ");
-  Serial.println("*******************************************************");
-
-  // 1. НАСТРОЙКА ПИНОВ AD8232 (ЭКГ)
-  Serial.println("\n[AD8232] Инициализация пинов кардиографа...");
-  analogReadResolution(12); // 12-битный ADC (0 .. 4095)
-  #if defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
-    analogSetPinAttenuation(AD8232_OUTPUT_PIN, ADC_11db);
-  #else
-    analogSetAttenuation(ADC_11db);
-  #endif
-
+  // 1. AD8232
+  analogReadResolution(12);
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && (ESP_ARDUINO_VERSION_MAJOR >= 3)
+  analogSetPinAttenuation(AD8232_OUTPUT_PIN, ADC_11db);
+#else
+  analogSetAttenuation(ADC_11db);
+#endif
   pinMode(AD8232_OUTPUT_PIN, INPUT);
-  // ВАЖНО: Используем INPUT_PULLDOWN, чтобы неподключенные пины LO+/LO- не плавали в HIGH
   pinMode(AD8232_LO_PLUS_PIN, INPUT);
   pinMode(AD8232_LO_MINUS_PIN, INPUT);
-  Serial.printf("[AD8232] Пины настроены: Output=GPIO%d, LO+=GPIO%d, LO-=GPIO%d\n",
-                AD8232_OUTPUT_PIN, AD8232_LO_PLUS_PIN, AD8232_LO_MINUS_PIN);
 
-  // 2. НАСТРОЙКА ШИНЫ I2C И MAX30102 (ПУЛЬСОКСИМЕТР)
-  Serial.println("\n[MAX30102] Инициализация шины I2C (SDA=21, SCL=22)...");
+  // 2. MAX30102
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
-  Wire.setClock(400000); // 400 кГц быстрый режим I2C
+  Wire.setClock(400000);
 
   if (!particleSensor.begin(Wire, I2C_SPEED_FAST)) {
-    Serial.println("❌ [MAX30102] Датчик не найден на шине I2C!");
-    Serial.println("   Проверьте питание (VIN 3.3V/5V), землю (GND) и подтяжку SDA/SCL.");
-    Serial.println("   ℹ️ Браслет продолжит работу с AD8232 в независимом режиме.");
+    Serial.println("❌ [MAX30102] Не найден. Работаем только с ЭКГ.");
     max30102Present = false;
   } else {
     max30102Present = true;
-    Serial.println("✅ [MAX30102] Датчик обнаружен и успешно инициализирован.");
-
-    // Конфигурация оптического датчика для измерения пульса и SpO2
-    // Режим ledMode = 2 (Red + IR, только для MAX30102!)
-    byte ledBrightness = 0x24; // ~7.2 мА (достаточно для точного считывания через кожу)
+    // Параметры как в SparkFun Example8_SPO2 (под алгоритм Maxim, 25 выб/с)
+    byte ledBrightness = 60;   // ~12 мА
     byte sampleAverage = 4;
-    byte ledMode = 2;          // 2 = Red + IR (SpO2 & HR)
-    int sampleRate = 100;      // 100 Гц
-    int pulseWidth = 411;      // 18-битное разрешение АЦП
-    int adcRange = 4096;       // 4096 nA
+    byte ledMode = 2;          // Red + IR
+    int sampleRate = 100;      // 100 / 4 = 25 выборок/с
+    int pulseWidth = 411;
+    int adcRange = 4096;
     particleSensor.setup(ledBrightness, sampleAverage, ledMode, sampleRate, pulseWidth, adcRange);
-
-    particleSensor.setPulseAmplitudeRed(0x24);
-    particleSensor.setPulseAmplitudeIR(0x24);
-    particleSensor.setPulseAmplitudeGreen(0); // Зеленый выключен (отсутствует в MAX30102)
-    Serial.println("[MAX30102] Параметры: Режим=Red+IR (Mode 2), Частота=100 Гц, Ток LED=0x24");
+    Serial.println("✅ [MAX30102] Готов (Red+IR, 25 выб/с).");
   }
 
-  // 3. ИНИЦИАЛИЗАЦИЯ BLUETOOTH LOW ENERGY (BLE)
-  Serial.println("\n[BLE] Запуск Bluetooth Low Energy стека...");
+  // 3. BLE
+  BLEDevice::setMTU(247);   // до init()
   BLEDevice::init(DEVICE_NAME);
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new QamqorServerCallbacks());
 
-  BLEService *pService = pServer->createService(SERVICE_UUID);
+  BLEService* pService = pServer->createService(SERVICE_UUID);
   pCharacteristic = pService->createCharacteristic(
                       CHARACTERISTIC_UUID,
-                      BLECharacteristic::PROPERTY_READ   |
-                      BLECharacteristic::PROPERTY_NOTIFY |
-                      BLECharacteristic::PROPERTY_INDICATE
+                      BLECharacteristic::PROPERTY_READ |
+                      BLECharacteristic::PROPERTY_NOTIFY
                     );
-
   pCharacteristic->setCallbacks(new QamqorCharCallbacks());
 
-  // Клиентский дескриптор уведомлений (CCCD 0x2902)
   pBLE2902 = new BLE2902();
-  pBLE2902->setNotifications(true); // Включаем флаг уведомлений по умолчанию
+  pBLE2902->setNotifications(true);
   pCharacteristic->addDescriptor(pBLE2902);
-
   pService->start();
 
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  BLEAdvertising* pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06); // 7.5 ms
-  pAdvertising->setMinPreferred(0x12); // 22.5 ms
+  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMaxPreferred(0x12);
   BLEDevice::startAdvertising();
+  Serial.println("✅ [BLE] Сервер запущен.");
 
-  Serial.println("✅ [BLE] Сервер запущен успешно.");
-  Serial.printf("   Device Name:         %s\n", DEVICE_NAME);
-  Serial.printf("   Service UUID:        %s\n", SERVICE_UUID);
-  Serial.printf("   Characteristic UUID: %s\n", CHARACTERISTIC_UUID);
-  Serial.println("\n⏳ Ожидание подключения PWA приложения Qamqor...");
+  // 4. Задача ЭКГ на ядре 1, приоритет выше loop()
+  xTaskCreatePinnedToCore(ecgTask, "ecg250", 4096, NULL, 2, NULL, 1);
+  Serial.println("✅ [ECG] Задача 250 Гц запущена.");
 }
 
 void loop() {
   unsigned long now = millis();
 
   // ====================================================================
-  // 1. СЧИТЫВАНИЕ АНАЛОГОВОГО СИГНАЛА ЭКГ С AD8232 (НЕЗАВИСИМО)
+  // 1. MAX30102: пульс + SpO2 (без блокировок, читаем весь FIFO)
   // ====================================================================
-  bool loPlus = (digitalRead(AD8232_LO_PLUS_PIN) == 1);
-  bool loMinus = (digitalRead(AD8232_LO_MINUS_PIN) == 1);
-  currentLeadsOff = (loPlus || loMinus);
-
-  int adcRaw = analogRead(AD8232_OUTPUT_PIN);
-
-  if (currentLeadsOff) {
-    currentECG = 2048; // Линия изолинии при аппаратном обрыве контакта
-  } else {
-    currentECG = (uint16_t)adcRaw;
-  }
-
-  // ====================================================================
-  // 2. СЧИТЫВАНИЕ ОПТИЧЕСКОГО СИГНАЛА С MAX30102 (НЕЗАВИСИМО)
-  // ====================================================================
-  long irValue = 0;
   if (max30102Present) {
-    irValue = particleSensor.getIR();
+    particleSensor.check();
 
-    // Проверка наличия пальца на сенсоре:
-    // Порог 10000 гарантирует надежное обнаружение пальца на питании 3.3V
-    if (irValue >= 10000) {
-      if (checkForBeat(irValue) == true) {
-        long delta = now - lastBeat;
-        lastBeat = now;
+    while (particleSensor.available()) {
+      uint32_t ir  = particleSensor.getFIFOIR();
+      uint32_t red = particleSensor.getFIFORed();
+      particleSensor.nextSample();
+      processPulseOxSample(ir, red, now);
+    }
 
-        if (delta > 0) {
-          beatsPerMinute = 60.0 / (delta / 1000.0);
-
-          if (beatsPerMinute >= 40 && beatsPerMinute <= 200) {
-            // Инициализация массива усреднения на первом достоверном ударе
-            if (rates[0] == 0) {
-              for (byte x = 0; x < RATE_SIZE; x++) rates[x] = (byte)beatsPerMinute;
-            } else {
-              rates[rateSpot++] = (byte)beatsPerMinute;
-              rateSpot %= RATE_SIZE;
-            }
-
-            beatAvg = 0;
-            for (byte x = 0; x < RATE_SIZE; x++) beatAvg += rates[x];
-            beatAvg /= RATE_SIZE;
-
-            currentBPM = (uint8_t)beatAvg;
-            currentSpO2 = 98; // Базовая сатурация при стабильном оптическом пульсе
-          }
-        }
-      }
-    } else {
-      // Палец убран с сенсора
+    // Нет ударов дольше таймаута — не показываем устаревший пульс
+    if (currentBPM > 0 && lastBeat > 0 && (now - lastBeat) > BPM_TIMEOUT_MS) {
       currentBPM = 0;
-      currentSpO2 = 0;
       for (byte x = 0; x < RATE_SIZE; x++) rates[x] = 0;
       rateSpot = 0;
     }
@@ -259,53 +386,62 @@ void loop() {
   }
 
   // ====================================================================
-  // 3. ОТПРАВКА BLE УВЕДОМЛЕНИЯ ПРИ ПОДКЛЮЧЕННОМ КЛИЕНТЕ (20 Гц)
+  // 2. BLE: пакет на каждые 10 накопленных отсчётов ЭКГ (40 мс)
   // ====================================================================
-  if (deviceConnected && (now - lastTelemetrySendTime >= TELEMETRY_INTERVAL_MS)) {
-    lastTelemetrySendTime = now;
+  if (!deviceConnected) {
+    ecgTail = ecgHead;
+  } else {
+    uint32_t head = ecgHead;
+    uint32_t avail = head - ecgTail;
 
-    // Формирование компактного JSON-пакета
-    // lo: 1 (обрыв электродов) или 0 (электроды на теле)
-    char payload[80];
-    snprintf(payload, sizeof(payload), "{\"bpm\":%u,\"spo2\":%u,\"ecg\":%u,\"lo\":%d}", 
-             currentBPM, 
-             currentSpO2, 
-             currentECG,
-             currentLeadsOff ? 1 : 0);
+    if (avail > ECG_RING_SIZE - ECG_SAMPLES_PER_PKT) {
+      ecgOverflowCount++;
+      ecgTail = head - ECG_SAMPLES_PER_PKT;
+      avail = ECG_SAMPLES_PER_PKT;
+    }
 
-    pCharacteristic->setValue((uint8_t*)payload, strlen(payload));
-    pCharacteristic->notify();
-    packetsSentCount++;
+    uint8_t guard = 0;
+    while (avail >= ECG_SAMPLES_PER_PKT && guard < 2) {
+      uint16_t samples[ECG_SAMPLES_PER_PKT];
+      uint32_t t = ecgTail;
+      for (uint8_t i = 0; i < ECG_SAMPLES_PER_PKT; i++) {
+        samples[i] = ecgRing[(t + i) & ECG_RING_MASK];
+      }
+      ecgTail = t + ECG_SAMPLES_PER_PKT;
+      avail -= ECG_SAMPLES_PER_PKT;
+      guard++;
+
+      sendPacket(samples, ECG_SAMPLES_PER_PKT, currentLeadsOff);
+    }
   }
 
   // ====================================================================
-  // 4. ДИАГНОСТИЧЕСКИЕ СООБЩЕНИЯ В SERIAL РАЗ В 1 СЕКУНДУ
+  // 3. ДИАГНОСТИКА (1 раз в секунду)
   // ====================================================================
   if (now - lastDiagPrintTime >= DIAG_INTERVAL_MS) {
     lastDiagPrintTime = now;
-
-    const char* bleState = deviceConnected ? "ПОДКЛЮЧЕН" : "ОЖИДАНИЕ";
-    const char* pulseState = !max30102Present ? "ДАТЧИК_ОТКЛ" : (irValue >= 10000 ? "ПАЛЕЦ_ОК" : "НЕТ_ПАЛЬЦА");
-    const char* ecgState = currentLeadsOff ? "ОБРЫВ_LO" : "СИГНАЛ_ОК";
-
-    Serial.printf("[DIAG 1s] BLE: %s (пакетов: %lu) | MAX30102: IR=%ld [%s] ЧСС=%u SpO2=%u%% | AD8232: ADC=%u [%s]\n",
-                  bleState,
+    const char* pulseState = !max30102Present ? "ДАТЧИК_ОТКЛ" :
+                             (lastIR >= FINGER_IR_THRESHOLD ? "ПАЛЕЦ_ОК" : "НЕТ_ПАЛЬЦА");
+    Serial.printf("[DIAG] BLE:%s MTU:%u пак:%lu err:%lu ovf:%lu | IR=%ld [%s] ЧСС=%u SpO2=%u%% (буфер %d/%d) | ECG=%u LO=%d\n",
+                  deviceConnected ? "ON" : "OFF",
+                  negotiatedMtu,
                   packetsSentCount,
-                  irValue,
-                  pulseState,
-                  currentBPM,
-                  currentSpO2,
-                  currentECG,
-                  ecgState);
+                  packetsFailedCount,
+                  ecgOverflowCount,
+                  lastIR, pulseState,
+                  currentBPM, currentSpO2,
+                  bufFill, SPO2_BUF,
+                  lastEcgSample,
+                  currentLeadsOff ? 1 : 0);
   }
 
   // ====================================================================
-  // 5. ОБРАБОТКА РАЗРЫВА И ВОЗОБНОВЛЕНИЯ RE-ADVERTISING BLE
+  // 4. ПЕРЕЗАПУСК РЕКЛАМЫ ПОСЛЕ РАЗРЫВА
   // ====================================================================
   if (!deviceConnected && oldDeviceConnected) {
-    delay(500); // Небольшая пауза перед перезапуском рекламы
+    delay(500);
     pServer->startAdvertising();
-    Serial.println("[BLE] 🔄 Возобновлена реклама BLE, ожидание переподключения PWA...");
+    Serial.println("[BLE] 🔄 Реклама возобновлена.");
     oldDeviceConnected = deviceConnected;
     packetsSentCount = 0;
   }
@@ -313,5 +449,5 @@ void loop() {
     oldDeviceConnected = deviceConnected;
   }
 
-  delay(2);
+  delay(1);
 }

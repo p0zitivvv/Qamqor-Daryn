@@ -357,19 +357,25 @@ export const App = {
     } else {
       this.state.bpm = null;
       this.state.spo2 = null;
-      this.state.pulseSensorStatus = data.pulseSensorStatus || 'waiting';
+      this.state.lastPulseTimestamp = 0;
+      this.state.pulseSensorStatus = data.pulseSensorStatus || 'no_finger';
     }
 
-    // 2. НЕЗАВИСИМАЯ ОБРАБОТКА ДАТЧИКА ЭКГ AD8232
+    // 2. НЕЗАВИСИМАЯ ОБРАБОТКА ДАТЧИКА ЭКГ AD8232 (250 Гц)
     if (data.hasActiveECG) {
       this.state.lastECGTimestamp = now;
-      this.state.ecgSensorStatus = data.ecgSensorStatus || 'ok';
+      this.state.ecgSensorStatus = 'ok';
 
       if (this.ecgCanvas) {
-        // Поддержка как пакета с массивом отсчетов ecgSamples, так и одиночного ecg
+        this.ecgCanvas.setLeadsOff(false);
+        // Передаем весь пакет отсчетов ЭКГ (10 отсчетов за 40 мс при 250 Гц)
         if (Array.isArray(data.ecgSamples) && data.ecgSamples.length > 0) {
-          for (const sample of data.ecgSamples) {
-            this.ecgCanvas.pushRealSample(sample);
+          if (typeof this.ecgCanvas.pushRealSamples === 'function') {
+            this.ecgCanvas.pushRealSamples(data.ecgSamples);
+          } else {
+            for (const sample of data.ecgSamples) {
+              this.ecgCanvas.pushRealSample(sample);
+            }
           }
         } else if (data.ecg != null) {
           this.ecgCanvas.pushRealSample(data.ecg);
@@ -381,8 +387,13 @@ export const App = {
       }
     } else {
       this.state.ecgSensorStatus = data.ecgSensorStatus || 'waiting';
-      if (this.ecgCanvas && (!this.state.lastECGTimestamp || (now - this.state.lastECGTimestamp > 3500))) {
-        this.ecgCanvas.setStreamActive(this.state.isConnected, false);
+      if (this.ecgCanvas) {
+        if (data.ecgSensorStatus === 'leads_off') {
+          this.ecgCanvas.setLeadsOff(true);
+        }
+        if (!this.state.lastECGTimestamp || (now - this.state.lastECGTimestamp > 3500)) {
+          this.ecgCanvas.setStreamActive(this.state.isConnected, false);
+        }
       }
     }
 

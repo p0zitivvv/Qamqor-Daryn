@@ -273,3 +273,76 @@ test('14. ПРЕКРАЩЕНИЕ ПЕРЕДАЧИ ДАТЧИКА: сброс в 
   assert.equal(history[2].ecgSensorStatus, 'leads_off');
   assert.equal(history[2].hasValidSensors, false);
 });
+
+test('15. РЕАЛЬНЫЙ ПАКЕТ ESP32: массив ecg из 10 отсчетов 250 Гц принимается полностью', () => {
+  const ble = new BLEService();
+  let received = null;
+  ble.onTelemetry = (t) => { received = t; };
+
+  const rawJson = '{"bpm":72,"spo2":98,"lo":0,"ecg":[2048,2051,2049,2055,2048,2050,2052,2047,2053,2051]}';
+  ble.handlePacket(rawJson);
+
+  assert.ok(received, 'Телеметрия должна сформироваться');
+  assert.equal(received.bpm, 72, 'BPM должен быть 72');
+  assert.equal(received.spo2, 98, 'SpO2 должен быть 98');
+  assert.equal(received.hasActivePulse, true, 'hasActivePulse должен быть true');
+  assert.equal(received.hasActiveECG, true, 'hasActiveECG должен быть true');
+  assert.equal(received.ecgSamples.length, 10, 'Все 10 отсчетов должны быть извлечены');
+  assert.deepEqual(received.ecgSamples, [2048, 2051, 2049, 2055, 2048, 2050, 2052, 2047, 2053, 2051]);
+  assert.equal(received.ecg, 2051, 'latestSample должен быть последним отсчетом');
+  assert.equal(received.ecgSensorStatus, 'ok');
+  assert.equal(received.status, 'receiving');
+});
+
+test('16. НЕТ ПАЛЬЦА В РЕАЛЬНОМ ПАКЕТЕ ESP32: ЧСС и SpO2 строго null, а 10 отсчетов ЭКГ продолжают поступать', () => {
+  const ble = new BLEService();
+  const history = [];
+  ble.onTelemetry = (t) => { history.push(t); };
+
+  // Шаг 1: сначала палец был приложен (BPM 72)
+  ble.handlePacket('{"bpm":72,"spo2":98,"lo":0,"ecg":[2048,2051,2049,2055,2048,2050,2052,2047,2053,2051]}');
+  assert.equal(history[0].bpm, 72);
+  assert.equal(history[0].hasActivePulse, true);
+
+  // Шаг 2: палец убран (прошивка шлет bpm:0, spo2:0, но ЭКГ 250 Гц идет)
+  ble.handlePacket('{"bpm":0,"spo2":0,"lo":0,"ecg":[2045,2048,2050,2052,2048,2046,2049,2051,2050,2048]}');
+  assert.equal(history.length, 2);
+  const pkt = history[1];
+
+  assert.equal(pkt.bpm, null, 'ЧСС должна быть строго null (отображение «—»)');
+  assert.equal(pkt.spo2, null, 'SpO2 должна быть строго null (отображение «—»)');
+  assert.equal(pkt.hasActivePulse, false, 'hasActivePulse должен быть false');
+  assert.equal(pkt.pulseSensorStatus, 'no_finger', 'Статус пульсоксиметра: no_finger');
+  assert.equal(pkt.hasActiveECG, true, 'ЭКГ должна быть активна');
+  assert.equal(pkt.ecgSamples.length, 10, 'Все 10 отсчетов ЭКГ переданы');
+  assert.equal(pkt.status, 'receiving_ecg_only');
+});
+
+test('17. MTU ФРАГМЕНТАЦИЯ РЕАЛЬНОГО ПАКЕТА: склейка 80-байтового пакета из 4 чанков по 20 байт', () => {
+  const ble = new BLEService();
+  let received = null;
+  ble.onTelemetry = (t) => { received = t; };
+
+  // Прошивка отправляет пакет порциями по 20 байт
+  const fullPacket = '{"bpm":72,"spo2":98,"lo":0,"ecg":[2048,2051,2049,2055,2048,2050,2052,2047,2053,2051]}';
+  const chunk1 = fullPacket.slice(0, 20);
+  const chunk2 = fullPacket.slice(20, 40);
+  const chunk3 = fullPacket.slice(40, 60);
+  const chunk4 = fullPacket.slice(60);
+
+  ble.handlePacket(chunk1);
+  assert.equal(received, null, 'Чанк 1 не должен вызывать onTelemetry');
+
+  ble.handlePacket(chunk2);
+  assert.equal(received, null, 'Чанк 2 не должен вызывать onTelemetry');
+
+  ble.handlePacket(chunk3);
+  assert.equal(received, null, 'Чанк 3 не должен вызывать onTelemetry');
+
+  ble.handlePacket(chunk4);
+  assert.ok(received, 'После последнего чанка пакет должен успешно собраться и распарситься');
+  assert.equal(received.bpm, 72);
+  assert.equal(received.spo2, 98);
+  assert.equal(received.ecgSamples.length, 10);
+  assert.deepEqual(received.ecgSamples, [2048, 2051, 2049, 2055, 2048, 2050, 2052, 2047, 2053, 2051]);
+});
