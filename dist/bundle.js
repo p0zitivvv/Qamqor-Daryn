@@ -3934,7 +3934,7 @@ class ECGCanvasService {
     this.animId = null;
     this.hasStream = false;
     this.isPaused = false;
-    this.currentBpm = 72;
+    this.currentBpm = 80;         // Умеренно учащенный живой ритм при волнении
     this.allowSynthetic = false;
 
     // Очередь нормализованных отсчётов (NaN = невалидный отсчёт, рисуется как разрыв линии)
@@ -3944,13 +3944,16 @@ class ECGCanvasService {
     this.lastFrameMs = 0;
     this.synthT = 0;              // время демо-сигнала
 
-    // Полиморфный физиологический генератор DEMO ECG (RSA + Beat-to-Beat вариации)
+    // Полиморфный физиологический генератор DEMO ECG (RSA + волны Майера + Beat-to-Beat вариации)
     this.synthPhase = 0.0;
     this.synthBeatIndex = 0;
     this.synthRespPhase = 0.0;
+    this.synthMayerPhase = 0.0;
+    this.synthJitter = 0.0;
     this.synthRHeight = 1.18;
     this.synthTHeight = 0.34;
-    this.synthPQWidth = 0.08;
+    this.synthPHeight = 0.16;
+    this.synthPQWidth = 0.09;
     this.synthPattern = 0;
 
     this.lastRealSampleTime = 0;  // последний ПОЛУЧЕННЫЙ отсчёт (любой)
@@ -4419,21 +4422,27 @@ class ECGCanvasService {
   }
 
   // ------------------------------------------------------------------
-  // Демо-сигнал: полиморфный физиологический генератор (P-Q-R-S-T)
-  // Реалистичная дыхательная аритмия (RSA), естественные вариации амплитуд
-  // и плавные переходы между 4 кардиологическими паттернами
+  // Демо-сигнал: полиморфный физиологический генератор (P-Q-R-S-T-U)
+  // Реалистичная дыхательная аритмия (RSA), волны Майера, естественные
+  // вариации интервалов RR, амплитуд зубцов и живые колебания изолинии
   // ------------------------------------------------------------------
 
   generateSyntheticSample(bpm) {
-    const baseBpm = Math.max(42, Math.min(180, bpm || 72));
+    // При легком волнении базовый ритм умеренно учащен (~78-84 уд/мин)
+    const baseBpm = Math.max(45, Math.min(180, bpm || 80));
 
-    // Дыхательный цикл ~0.24 Гц (14 вдохов/мин)
+    // 1. Дыхательный цикл (~0.24 Гц, ~14 вдохов/мин)
     const respHz = 0.24;
     this.synthRespPhase = (this.synthRespPhase + respHz / SAMPLE_RATE_HZ) % 1.0;
     const respWave = Math.sin(2 * Math.PI * this.synthRespPhase);
 
-    // Дыхательная синусовая аритмия (RSA): плавная модуляция интервалов RR на ±5-7%
-    const currentInstBpm = baseBpm * (1.0 + 0.065 * respWave);
+    // 2. Вазомоторные волны Майера (~0.09 Гц, вегетативный тонус)
+    const mayerHz = 0.09;
+    this.synthMayerPhase = (this.synthMayerPhase + mayerHz / SAMPLE_RATE_HZ) % 1.0;
+    const mayerWave = Math.sin(2 * Math.PI * this.synthMayerPhase);
+
+    // Мгновенный ритм: дыхательная аритмия + медленные вазомоторные волны + естественный микро-джиттер
+    const currentInstBpm = baseBpm * (1.0 + 0.065 * respWave + 0.035 * mayerWave + this.synthJitter);
     const dPhase = currentInstBpm / (60 * SAMPLE_RATE_HZ);
 
     this.synthPhase += dPhase;
@@ -4441,71 +4450,62 @@ class ECGCanvasService {
       this.synthPhase -= 1.0;
       this.synthBeatIndex++;
 
-      // Смена физиологических шаблонов каждые 5-7 сокращений
-      this.synthPattern = Math.floor(this.synthBeatIndex / 6) % 4;
+      // Случайный затухающий джиттер интервала следующего удара (AR-1 процесс)
+      this.synthJitter = 0.65 * this.synthJitter + 0.35 * ((Math.random() - 0.5) * 0.06);
 
-      // Вариации вольтажа R-зубца и T-волны в зависимости от дыхания и паттерна
-      let targetR = 1.18;
-      let targetT = 0.34;
-      let targetPQ = 0.08;
-
-      if (this.synthPattern === 1) {
-        // Паттерн 1: фаза глубокого вдоха (более высокий зубец R, акцентированный T)
-        targetR = 1.28 + 0.08 * respWave;
-        targetT = 0.38;
-        targetPQ = 0.076;
-      } else if (this.synthPattern === 2) {
-        // Паттерн 2: фаза выдоха (умеренный вольтаж, сглаженный T-зубец)
-        targetR = 1.10 + 0.05 * respWave;
-        targetT = 0.29;
-        targetPQ = 0.084;
-      } else if (this.synthPattern === 3) {
-        // Паттерн 3: нормовольтажный комплекс с легким расширением ST
-        targetR = 1.22 + 0.04 * respWave;
-        targetT = 0.35;
-        targetPQ = 0.080;
-      } else {
-        // Паттерн 0: классический синусовый ритм
-        targetR = 1.16 + 0.06 * respWave;
-        targetT = 0.32;
-        targetPQ = 0.080;
-      }
+      // Вариации амплитуд зубцов от цикла к циклу (эффект легкого волнения и дыхания)
+      const targetR = 1.18 + 0.11 * respWave + 0.04 * mayerWave + (Math.random() - 0.5) * 0.07;
+      const targetT = 0.34 + 0.05 * mayerWave + 0.03 * respWave + (Math.random() - 0.5) * 0.05;
+      const targetP = 0.16 + (Math.random() - 0.5) * 0.03;
+      const targetPQ = 0.09 + (Math.random() - 0.5) * 0.01;
 
       // Плавное подтягивание параметров без скачков
-      this.synthRHeight = this.synthRHeight * 0.4 + targetR * 0.6;
-      this.synthTHeight = this.synthTHeight * 0.4 + targetT * 0.6;
-      this.synthPQWidth = this.synthPQWidth * 0.4 + targetPQ * 0.6;
+      this.synthRHeight = this.synthRHeight * 0.45 + targetR * 0.55;
+      this.synthTHeight = this.synthTHeight * 0.45 + targetT * 0.55;
+      this.synthPHeight = this.synthPHeight * 0.45 + targetP * 0.55;
+      this.synthPQWidth = this.synthPQWidth * 0.45 + targetPQ * 0.55;
     }
 
-    const phase = this.synthPhase;
+    const p = this.synthPhase;
     let val = 0.0;
 
     // 1. P-зубец (деполяризация предсердий)
-    const pStart = 0.12;
+    const pStart = 0.11;
     const pEnd = pStart + this.synthPQWidth;
-    if (phase >= pStart && phase < pEnd) {
-      val += 0.16 * Math.sin(((phase - pStart) / this.synthPQWidth) * Math.PI);
+    if (p >= pStart && p < pEnd) {
+      val += this.synthPHeight * Math.sin(((p - pStart) / this.synthPQWidth) * Math.PI);
     }
     // 2. Q-зубец (деполяризация межжелудочковой перегородки)
-    else if (phase >= 0.28 && phase < 0.30) {
-      val -= 0.13 * Math.sin(((phase - 0.28) / 0.02) * Math.PI);
+    else if (p >= 0.28 && p < 0.30) {
+      val -= 0.13 * Math.sin(((p - 0.28) / 0.02) * Math.PI);
     }
-    // 3. R-зубец (главный пик деполяризации желудочков)
-    else if (phase >= 0.30 && phase < 0.34) {
-      val += this.synthRHeight * Math.sin(((phase - 0.30) / 0.04) * Math.PI);
+    // 3. R-зубец (главный пик деполяризации желудочков с физиологической крутизной)
+    else if (p >= 0.30 && p < 0.34) {
+      val += this.synthRHeight * Math.sin(((p - 0.30) / 0.04) * Math.PI);
     }
     // 4. S-зубец (отрицательное отклонение желудочков)
-    else if (phase >= 0.34 && phase < 0.38) {
-      val -= (0.22 + 0.04 * (this.synthRHeight - 1.18)) * Math.sin(((phase - 0.34) / 0.04) * Math.PI);
+    else if (p >= 0.34 && p < 0.385) {
+      val -= (0.23 + 0.05 * (this.synthRHeight - 1.18)) * Math.sin(((p - 0.34) / 0.045) * Math.PI);
     }
-    // 5. T-зубец (реполяризация желудочков)
-    else if (phase >= 0.50 && phase < 0.70) {
-      val += this.synthTHeight * Math.sin(((phase - 0.50) / 0.20) * Math.PI);
+    // 5. ST-сегмент (легкая естественная выпуклость при волнении)
+    else if (p >= 0.385 && p < 0.48) {
+      val += 0.02 * Math.sin(((p - 0.385) / 0.095) * Math.PI);
+    }
+    // 6. T-зубец (асимметричная физиологическая реполяризация желудочков)
+    else if (p >= 0.48 && p < 0.70) {
+      const tProg = (p - 0.48) / 0.22;
+      val += this.synthTHeight * Math.sin(tProg * Math.PI) * (1.1 - 0.2 * tProg);
+    }
+    // 7. U-зубец (естественный физиологический подъемчик на изолинии перед следующим комплексом)
+    else if (p >= 0.72 && p < 0.82) {
+      val += 0.045 * Math.sin(((p - 0.72) / 0.10) * Math.PI);
     }
 
-    // Естественный дыхательный дрейф изолинии и микроструктура фосфорного луча
-    val += 0.025 * respWave;
-    val += (Math.random() - 0.5) * 0.01;
+    // Естественные плавные подъемы и спады изолинии (дыхание + вазомоторные волны Майера)
+    val += 0.028 * respWave + 0.016 * mayerWave;
+
+    // Микроструктура фосфорного луча
+    val += (Math.random() - 0.5) * 0.008;
 
     return val;
   }
