@@ -149,9 +149,9 @@ export const App = {
       this.goToSurveyStep(1);
     }
 
-    // Проверка административного маршрута (#admin, #admin/dashboard)
-    this.checkAdminRoute();
-    window.addEventListener('hashchange', () => this.checkAdminRoute());
+    // Скрытый режим демонстрации (активируется после 5 нажатий на «Основная информация» и ввода 2020)
+    this.state.hiddenAdminMode = localStorage.getItem('qamqor_hidden_admin_mode') === 'true';
+    this.state.forceDemoECG = this.state.hiddenAdminMode;
 
     // Сторожевой таймер активности реальных датчиков (Watchdog)
     setInterval(() => {
@@ -215,7 +215,7 @@ export const App = {
   // ========================================================
   showScreen(screenId) {
     this.state.currentScreen = screenId;
-    ['screen-onboarding-connect', 'screen-onboarding-survey', 'screen-main-app', 'screen-admin', 'screen-admin-dashboard'].forEach(id => {
+    ['screen-onboarding-connect', 'screen-onboarding-survey', 'screen-main-app'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         el.classList.add('hidden');
@@ -233,14 +233,10 @@ export const App = {
       this.goToSurveyStep(this.state.currentSurveyStep || 1);
     } else if (screenId === 'main-app') {
       this.renderAll();
-      if (this.state.isDemo || this.state.isConnected) {
-        this.ecgCanvas.setStreamActive(true, this.state.isDemo);
+      const allowSynth = this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG;
+      if (this.state.isDemo || this.state.isConnected || this.state.hiddenAdminMode) {
+        this.ecgCanvas.setStreamActive(true, allowSynth);
       }
-    } else if (screenId === 'admin') {
-      this.renderAdminPanel();
-    } else if (screenId === 'admin-dashboard') {
-      this.renderAdminDashboard();
-      this.startAdminSyntheticECG();
     }
   },
 
@@ -381,7 +377,18 @@ export const App = {
     }
 
     // 2. НЕЗАВИСИМАЯ ОБРАБОТКА ДАТЧИКА ЭКГ AD8232 (250 Гц)
-    if (data.hasActiveECG) {
+    if (this.state.hiddenAdminMode || this.state.forceDemoECG) {
+      // Скрытый режим: ЭКГ СТРОГО В ЖИВОМ DEMO-РЕЖИМЕ (полиморфная симуляция)
+      this.state.lastECGTimestamp = now;
+      this.state.ecgSensorStatus = 'ok';
+      if (this.ecgCanvas) {
+        this.ecgCanvas.setLeadsOff(false);
+        this.ecgCanvas.setStreamActive(true, true); // allowSynthetic = true!
+        if (this.state.bpm) {
+          this.ecgCanvas.setBPM(this.state.bpm);
+        }
+      }
+    } else if (data.hasActiveECG) {
       this.state.lastECGTimestamp = now;
       this.state.ecgSensorStatus = 'ok';
 
@@ -485,13 +492,7 @@ export const App = {
     if (this.state.currentSurveyStep === 4) {
       this.updateSurveyDeviceStatus();
     }
-
     this.state.lastRawJSON = data.rawJSON;
-    if (this.state.currentScreen === 'admin') {
-      this.renderAdminPanel();
-    } else if (this.state.currentScreen === 'admin-dashboard') {
-      this.renderAdminDashboard();
-    }
   },
 
   handleBLEStatusChange(status) {
@@ -534,11 +535,6 @@ export const App = {
     this.renderDashboardMetrics();
     if (this.state.currentSurveyStep === 4) {
       this.updateSurveyDeviceStatus();
-    }
-    if (this.state.currentScreen === 'admin') {
-      this.renderAdminPanel();
-    } else if (this.state.currentScreen === 'admin-dashboard') {
-      this.renderAdminDashboard();
     }
   },
 
@@ -849,9 +845,9 @@ export const App = {
     // 1. Поток и частота в шапке
     const streamHzEl = document.getElementById('home-stream-hz');
     if (streamHzEl) {
-      if (this.state.isDemo) {
-        streamHzEl.textContent = 'DEMO 250 Гц • Симуляция';
-        streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200';
+      if (this.state.isDemo || this.state.hiddenAdminMode) {
+        streamHzEl.textContent = 'DEMO ECG • 250 Гц';
+        streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-mono font-medium';
       } else if (this.state.ecgSensorStatus === 'ok') {
         streamHzEl.textContent = 'LIVE 250 Гц • AD8232 активен';
         streamHzEl.className = 'inline-flex items-center px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200';
@@ -883,6 +879,8 @@ export const App = {
     if (devDesc) {
       if (this.state.isDemo) {
         devDesc.textContent = 'Генерация виртуальных биосигналов для тестирования';
+      } else if (this.state.hiddenAdminMode && hasPulse) {
+        devDesc.textContent = `Браслет ${this.state.deviceName || 'Qamqor_Band'} • Пульс и SpO2 активны (DEMO ECG)`;
       } else if (hasPulse && hasECG) {
         devDesc.textContent = `Браслет ${this.state.deviceName || 'Qamqor_Band'} • MAX30102 и AD8232 активны`;
       } else if (hasPulse) {
@@ -3308,25 +3306,32 @@ export const App = {
   },
 
   // ========================================================
-  // АДМИНИСТРАТИВНАЯ ПАНЕЛЬ И ВХОД (Strict Password: 2020)
+  // СКРЫТЫЙ РЕЖИМ (5 НАЖАТИЙ НА «ОСНОВНАЯ ИНФОРМАЦИЯ», ПАРОЛЬ: 2020)
   // ========================================================
-  _logoClicks: 0,
-  _lastLogoClick: 0,
-  _adminECGAnimId: null,
+  _surveyTitleClicks: 0,
+  _lastSurveyTitleClick: 0,
 
-  handleLogoClick(event) {
-    if (event) event.stopPropagation();
-    const now = Date.now();
-    if (now - this._lastLogoClick > 3000) {
-      this._logoClicks = 0;
+  handleSurveyTitleClick(event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
     }
-    this._lastLogoClick = now;
-    this._logoClicks++;
+    const now = Date.now();
+    if (now - this._lastSurveyTitleClick > 3500) {
+      this._surveyTitleClicks = 0;
+    }
+    this._lastSurveyTitleClick = now;
+    this._surveyTitleClicks++;
 
-    if (this._logoClicks >= 5) {
-      this._logoClicks = 0;
+    if (this._surveyTitleClicks >= 5) {
+      this._surveyTitleClicks = 0;
       this.openAdminAuthModal();
     }
+  },
+
+  handleLogoClick(event) {
+    // Поддержка клика по логотипу
+    this.handleSurveyTitleClick(event);
   },
 
   openAdminAuthModal() {
@@ -3351,7 +3356,7 @@ export const App = {
     const input = document.getElementById('admin-auth-pass');
     const errorBox = document.getElementById('admin-auth-error');
     const submitBtn = document.getElementById('admin-auth-submit-btn');
-    const password = input ? input.value : '';
+    const password = input ? input.value.trim() : '';
 
     if (!password) return;
 
@@ -3359,286 +3364,51 @@ export const App = {
     if (errorBox) errorBox.classList.add('hidden');
 
     try {
-      const res = await fetch('/api/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'login', password })
-      });
-      const data = await res.json();
-
-      if (res.ok && data.success && data.token) {
-        sessionStorage.setItem('qamqor_admin_token', data.token);
-        this.closeAdminAuthModal();
-        window.location.hash = '#admin';
-        this.showScreen('admin');
-        this.showToast('Авторизация успешна. Добро пожаловать в консоль инженера!', 'success');
-      } else {
-        const msg = data.error || 'Неверный пароль';
-        if (errorBox) {
-          errorBox.textContent = msg;
-          errorBox.classList.remove('hidden');
+      let isSuccess = false;
+      try {
+        const res = await fetch('/api/auth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'login', password })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          isSuccess = true;
+        } else if (data.error) {
+          if (errorBox) {
+            errorBox.textContent = data.error;
+            errorBox.classList.remove('hidden');
+          }
+        }
+      } catch (fetchErr) {
+        if (password === '2020') {
+          isSuccess = true;
         }
       }
-    } catch (e) {
-      if (errorBox) {
-        errorBox.textContent = 'Ошибка соединения с сервером авторизации';
-        errorBox.classList.remove('hidden');
+
+      if (isSuccess || password === '2020') {
+        this.state.hiddenAdminMode = true;
+        this.state.forceDemoECG = true;
+        localStorage.setItem('qamqor_hidden_admin_mode', 'true');
+        this.closeAdminAuthModal();
+        // Возвращаемся к существующей анкете QAMQOR без изменения дизайна
+        this.showToast('✅ Режим скрытой демонстрации активирован', 'success');
+      } else if (!errorBox || errorBox.classList.contains('hidden')) {
+        if (errorBox) {
+          errorBox.textContent = 'Неверный пароль доступа';
+          errorBox.classList.remove('hidden');
+        }
       }
     } finally {
       if (submitBtn) submitBtn.disabled = false;
     }
   },
 
-  async checkAdminRoute() {
-    const hash = window.location.hash || '';
-    const path = window.location.pathname || '';
-    const isAdmin = hash === '#admin' || hash.startsWith('#admin') || path.startsWith('/admin');
-
-    if (!isAdmin) return;
-
-    const token = sessionStorage.getItem('qamqor_admin_token');
-    if (!token) {
-      if (this.state.currentScreen === 'admin' || this.state.currentScreen === 'admin-dashboard') {
-        this.showScreen('main-app');
-      }
-      this.openAdminAuthModal();
-      return;
-    }
-
-    try {
-      const res = await fetch('/api/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify', token })
-      });
-      const data = await res.json();
-      if (res.ok && data.valid) {
-        if (hash === '#admin/dashboard' || path === '/admin/dashboard') {
-          this.showScreen('admin-dashboard');
-        } else {
-          this.showScreen('admin');
-        }
-      } else {
-        sessionStorage.removeItem('qamqor_admin_token');
-        this.showScreen('main-app');
-        this.openAdminAuthModal();
-      }
-    } catch {
-      if (hash === '#admin/dashboard' || path === '/admin/dashboard') {
-        this.showScreen('admin-dashboard');
-      } else {
-        this.showScreen('admin');
-      }
-    }
-  },
-
-  adminLogout() {
-    sessionStorage.removeItem('qamqor_admin_token');
-    if (this._adminECGAnimId) {
-      cancelAnimationFrame(this._adminECGAnimId);
-      this._adminECGAnimId = null;
-    }
-    window.location.hash = '';
-    this.showScreen('main-app');
-    this.showToast('Вы вышли из консоли администратора', 'info');
-  },
-
-  openAdminDashboard() {
-    window.location.hash = '#admin/dashboard';
-    this.showScreen('admin-dashboard');
-  },
-
-  renderAdminPanel() {
-    const blePill = document.getElementById('admin-ble-status-pill');
-    const bleDot = document.getElementById('admin-ble-dot');
-    const fingerEl = document.getElementById('admin-status-finger');
-    const qualityEl = document.getElementById('admin-status-quality');
-    const hrEl = document.getElementById('admin-status-hr');
-    const spo2El = document.getElementById('admin-status-spo2');
-    const rawPktEl = document.getElementById('admin-raw-packet');
-    const pktCountEl = document.getElementById('admin-pkt-counter');
-
-    const lstatEl = document.getElementById('admin-model-lstat');
-    const ldynEl = document.getElementById('admin-model-ldyn');
-    const qscoreEl = document.getElementById('admin-model-qscore');
-
-    if (blePill && bleDot) {
-      if (this.state.isConnected) {
-        blePill.textContent = 'Подключено';
-        blePill.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800';
-        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
-      } else {
-        blePill.textContent = 'Отключено';
-        blePill.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700';
-        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
-      }
-    }
-
-    const finger = this.state.fingerDetected ?? (this.state.pulseSensorStatus === 'ok');
-    const stateStr = this.state.measurementState || (finger ? 'VALID' : 'NO_FINGER');
-    const qualityStr = this.state.signalQuality || (finger ? 'GOOD' : 'POOR');
-
-    if (fingerEl) fingerEl.textContent = stateStr;
-    if (qualityEl) qualityEl.textContent = qualityStr;
-
-    const hrVal = (finger && this.state.bpm) ? `${this.state.bpm} уд/мин (true)` : '— (false)';
-    const spVal = (finger && this.state.spo2) ? `${this.state.spo2}% (true)` : '— (false)';
-
-    if (hrEl) hrEl.textContent = hrVal;
-    if (spo2El) spo2El.textContent = spVal;
-
-    if (rawPktEl && this.state.lastRawJSON) {
-      rawPktEl.textContent = JSON.stringify(this.state.lastRawJSON, null, 2);
-    }
-    if (pktCountEl && this.bleService) {
-      pktCountEl.textContent = `Пакет #${this.bleService.packetCount || 0}`;
-    }
-
-    if (lstatEl && this.state.lStatResult) {
-      lstatEl.textContent = this.state.lStatResult.score != null ? this.state.lStatResult.score.toFixed(1) : '—';
-    }
-    if (ldynEl && this.state.lDynResult) {
-      ldynEl.textContent = this.state.lDynResult.score != null ? this.state.lDynResult.score.toFixed(1) : '—';
-    }
-    if (qscoreEl && this.state.qualityResult) {
-      qscoreEl.textContent = this.state.qualityResult.score != null ? this.state.qualityResult.score.toFixed(1) : '—';
-    }
-  },
-
-  renderAdminDashboard() {
-    const bpmEl = document.getElementById('admin-dash-bpm');
-    const bpmStatus = document.getElementById('admin-dash-bpm-status');
-    const bpmDot = document.getElementById('admin-dash-bpm-dot');
-
-    const spo2El = document.getElementById('admin-dash-spo2');
-    const spo2Status = document.getElementById('admin-dash-spo2-status');
-    const spo2Dot = document.getElementById('admin-dash-spo2-dot');
-
-    const contactEl = document.getElementById('admin-dash-contact');
-    const qualityEl = document.getElementById('admin-dash-quality');
-    const contactDot = document.getElementById('admin-dash-contact-dot');
-
-    const timeEl = document.getElementById('admin-dash-last-time');
-    const bleStateEl = document.getElementById('admin-dash-ble-state');
-    const bleDot = document.getElementById('admin-dash-ble-dot');
-
-    const bpmLabel = document.getElementById('admin-ecg-bpm-label');
-
-    const finger = this.state.fingerDetected ?? (this.state.pulseSensorStatus === 'ok');
-
-    // КРИТИЧНО: При отсутствии пальца (NO FINGER) строго показывать '--', не зависать!
-    if (!finger || !this.state.isConnected) {
-      if (bpmEl) bpmEl.textContent = '—';
-      if (bpmStatus) bpmStatus.textContent = 'NO FINGER';
-      if (bpmDot) bpmDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
-
-      if (spo2El) spo2El.textContent = '—';
-      if (spo2Status) spo2Status.textContent = 'NO FINGER';
-      if (spo2Dot) spo2Dot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
-
-      if (contactEl) contactEl.textContent = 'NO FINGER';
-      if (qualityEl) qualityEl.textContent = 'Качество: POOR';
-      if (contactDot) contactDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
-    } else {
-      if (bpmEl) bpmEl.textContent = this.state.bpm ? this.state.bpm : '—';
-      if (bpmStatus) bpmStatus.textContent = this.state.bpm ? 'VALID' : 'MEASURING...';
-      if (bpmDot) bpmDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse';
-
-      if (spo2El) spo2El.textContent = this.state.spo2 ? this.state.spo2 : '—';
-      if (spo2Status) spo2Status.textContent = this.state.spo2 ? 'VALID' : 'CALCULATING...';
-      if (spo2Dot) spo2Dot.className = 'w-2.5 h-2.5 rounded-full bg-sky-500';
-
-      if (contactEl) contactEl.textContent = this.state.measurementState || 'VALID';
-      if (qualityEl) qualityEl.textContent = `Качество: ${this.state.signalQuality || 'GOOD'}`;
-      if (contactDot) contactDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
-    }
-
-    if (this.state.lastPulseTimestamp > 0) {
-      const d = new Date(this.state.lastPulseTimestamp);
-      if (timeEl) timeEl.textContent = d.toTimeString().split(' ')[0];
-    } else {
-      if (timeEl) timeEl.textContent = '--:--:--';
-    }
-
-    if (bleStateEl && bleDot) {
-      if (this.state.isConnected) {
-        bleStateEl.textContent = `BLE: ${this.state.deviceName || 'Qamqor Band'}`;
-        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
-      } else {
-        bleStateEl.textContent = 'BLE: Отключено';
-        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
-      }
-    }
-
-    if (bpmLabel) {
-      bpmLabel.textContent = `${this.state.bpm || 72} уд/мин`;
-    }
-  },
-
-  startAdminSyntheticECG() {
-    if (this._adminECGAnimId) return;
-    const canvas = document.getElementById('adminECGCanvas');
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    let t = 0;
-    const fs = 250;
-    const dt = 1 / fs;
-    let sweepX = 0;
-    const pxPerSec = 125;
-    const pxPerSample = pxPerSec / fs;
-
-    const draw = () => {
-      if (this.state.currentScreen !== 'admin-dashboard') {
-        this._adminECGAnimId = null;
-        return;
-      }
-
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0) {
-        const dpr = window.devicePixelRatio || 1;
-        const targetW = Math.floor(rect.width * dpr);
-        const targetH = Math.floor(rect.height * dpr);
-        if (canvas.width !== targetW || canvas.height !== targetH) {
-          canvas.width = targetW;
-          canvas.height = targetH;
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.scale(dpr, dpr);
-        }
-
-        const w = rect.width;
-        const h = rect.height;
-        const midY = h / 2;
-
-        const bpm = (this.state.fingerDetected && this.state.bpm) ? this.state.bpm : 72;
-        const samplesPerFrame = Math.round(fs / 60);
-
-        for (let i = 0; i < samplesPerFrame; i++) {
-          const val = this.ecgCanvas.generateSyntheticECG(t, bpm);
-          t += dt;
-
-          const nextX = (sweepX + pxPerSample) % w;
-          ctx.fillStyle = '#060b13';
-          ctx.fillRect(sweepX, 0, 16, h);
-
-          ctx.strokeStyle = '#34d399';
-          ctx.shadowColor = '#10b981';
-          ctx.shadowBlur = 4;
-          ctx.lineWidth = 2.0;
-          ctx.beginPath();
-          ctx.moveTo(sweepX, midY - val * (h * 0.38));
-          ctx.lineTo(nextX, midY - val * (h * 0.38));
-          ctx.stroke();
-          ctx.shadowBlur = 0;
-
-          sweepX = nextX;
-        }
-      }
-
-      this._adminECGAnimId = requestAnimationFrame(draw);
-    };
-
-    this._adminECGAnimId = requestAnimationFrame(draw);
+  resetHiddenAdminMode() {
+    this.state.hiddenAdminMode = false;
+    this.state.forceDemoECG = false;
+    localStorage.removeItem('qamqor_hidden_admin_mode');
+    this.showToast('Скрытый режим деактивирован', 'info');
   },
 
   registerSW() {
