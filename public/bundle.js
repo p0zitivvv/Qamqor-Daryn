@@ -3043,6 +3043,24 @@ class BLEService {
       throw err;
     }
 
+    // Если GATT сервер уже подключен и готов к работе
+    if (this.server && this.server.connected && this.characteristic) {
+      console.log(`[QAMQOR BLE] Уже подключено к ${this.deviceName}`);
+      this.isConnected = true;
+      this.updateStatus('connected_no_data', 'Подключено');
+      return this.deviceName;
+    }
+
+    // Если предыдущее соединение зависло или осталось открытым — аккуратно освобождаем ресурс
+    if (this.device && this.device.gatt && this.device.gatt.connected) {
+      try {
+        console.log('[QAMQOR BLE] Сброс предыдущего GATT соединения...');
+        this.device.gatt.disconnect();
+      } catch (e) {
+        console.warn('[QAMQOR BLE] Предыдущее соединение сброшено:', e);
+      }
+    }
+
     this.userRequestedDisconnect = false;
     this.clearReconnectTimer();
     this.reconnectAttempts = 0;
@@ -3056,18 +3074,35 @@ class BLEService {
 
       console.log(`[QAMQOR BLE] [${new Date().toLocaleTimeString('ru-RU')}] Запрос устройства Web Bluetooth...`);
 
-      const device = await navigator.bluetooth.requestDevice({
-
-        filters: [
-          { name: 'Qamqor_Band' },
-          { name: 'Qamqor Band' },
-          { namePrefix: 'Qamqor' }
-        ],
-
-        optionalServices: [
-          serviceUuid
-        ]
-      });
+      // Спецификация фильтров: поиск и по Service UUID (в первичном adv-пакете ESP32),
+      // и по имени устройства (в Scan Response пакете) для мгновенного обнаружения на Windows и Android
+      let device;
+      try {
+        device = await navigator.bluetooth.requestDevice({
+          filters: [
+            { services: [serviceUuid] },
+            { name: 'Qamqor_Band' },
+            { name: 'Qamqor Band' },
+            { namePrefix: 'Qamqor' }
+          ],
+          optionalServices: [
+            serviceUuid
+          ]
+        });
+      } catch (reqErr) {
+        // Если пользователь сам нажал "Отмена" в системном диалоге
+        if (reqErr.name === 'NotFoundError' && reqErr.message && reqErr.message.toLowerCase().includes('user cancelled')) {
+          throw reqErr;
+        }
+        // Fallback: расширенный поиск без фильтра имени, если adv-пакет урезан драйвером ОС
+        console.warn('[QAMQOR BLE] Поиск по фильтрам не дал результата, пробуем acceptAllDevices...', reqErr);
+        device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [
+            serviceUuid
+          ]
+        });
+      }
 
       this.device = device;
       this.deviceName = device.name || 'Qamqor_Band';
@@ -3084,7 +3119,13 @@ class BLEService {
 
       console.log(`[QAMQOR BLE] [${new Date().toLocaleTimeString('ru-RU')}] Подключение к GATT серверу ${this.deviceName}...`);
 
-      this.server = await device.gatt.connect();
+      // Таймаут подключения к GATT (12 сек) для защиты от зависания стека
+      const connectPromise = device.gatt.connect();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Таймаут подключения к браслету (12 сек). Проверьте, включён ли браслет и не подключён ли он к другому устройству.')), 12000);
+      });
+
+      this.server = await Promise.race([connectPromise, timeoutPromise]);
 
       const service =
         await this.server.getPrimaryService(serviceUuid);
@@ -3286,7 +3327,11 @@ class BLEService {
     );
 
     console.log(`[QAMQOR BLE] [${new Date().toLocaleTimeString('ru-RU')}] Повторное gatt.connect() к ${this.deviceName}...`);
-    this.server = await this.device.gatt.connect();
+    const reconnectPromise = this.device.gatt.connect();
+    const reconnectTimeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Таймаут повторного подключения GATT (10 сек)')), 10000);
+    });
+    this.server = await Promise.race([reconnectPromise, reconnectTimeout]);
 
     const service =
       await this.server.getPrimaryService(serviceUuid);
@@ -5135,8 +5180,15 @@ const App = {
       this.state.pIrr = null;
     }
 
-    // Если пользователь ещё на экране анкеты/проверки датчика, сразу переводим в дашборд
-    if (this.state.currentScreen === 'onboarding-survey' && (hasPulse || hasECG)) {
+    // Обновление статуса датчиков на шаге проверки (шаг 4) без прерывания заполнения анкеты на шагах 1-3
+    if (this.state.currentScreen === 'onboarding-survey') {
+      if (this.state.currentSurveyStep === 4) {
+        this.updateSurveyDeviceStatus();
+        if (hasPulse && !this.state.hiddenAdminMode) {
+          this.completeSurveyAndOpenApp();
+        }
+      }
+    } else if (this.state.currentScreen === 'onboarding-connect' && (hasPulse || hasECG)) {
       this.completeSurveyAndOpenApp();
     }
 

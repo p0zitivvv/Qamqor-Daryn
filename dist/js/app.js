@@ -466,8 +466,15 @@ export const App = {
       this.state.pIrr = null;
     }
 
-    // Если пользователь ещё на экране анкеты/проверки датчика, сразу переводим в дашборд
-    if (this.state.currentScreen === 'onboarding-survey' && (hasPulse || hasECG)) {
+    // Обновление статуса датчиков на шаге проверки (шаг 4) без прерывания заполнения анкеты на шагах 1-3
+    if (this.state.currentScreen === 'onboarding-survey') {
+      if (this.state.currentSurveyStep === 4) {
+        this.updateSurveyDeviceStatus();
+        if (hasPulse && !this.state.hiddenAdminMode) {
+          this.completeSurveyAndOpenApp();
+        }
+      }
+    } else if (this.state.currentScreen === 'onboarding-connect' && (hasPulse || hasECG)) {
       this.completeSurveyAndOpenApp();
     }
 
