@@ -138,6 +138,42 @@ const DeviceState = {
 
 
 /**
+ * Валидация измерения ЧСС (уд/мин)
+ * @param {number} bpm
+ * @returns {Object} { isValid, bpm, reason }
+ */
+function validateHeartRate(bpm) {
+  if (typeof bpm !== 'number' || isNaN(bpm)) {
+    return { isValid: false, reason: 'ЧСС должен быть числом' };
+  }
+  if (bpm <= 0) {
+    return { isValid: false, reason: 'Нет контакта с датчиком' };
+  }
+  if (bpm < MODEL_CONFIG.signals.hr_min || bpm > MODEL_CONFIG.signals.hr_max) {
+    return { isValid: false, bpm, reason: `Пульс вне физиологического диапазона [30, 220]: ${bpm}` };
+  }
+  return { isValid: true, bpm: Math.round(bpm) };
+}
+
+/**
+ * Валидация измерения SpO2 (%)
+ * @param {number} spo2
+ * @returns {Object} { isValid, spo2, reason }
+ */
+function validateSpO2(spo2) {
+  if (typeof spo2 !== 'number' || isNaN(spo2)) {
+    return { isValid: false, reason: 'SpO2 должен быть числом' };
+  }
+  if (spo2 <= 0) {
+    return { isValid: false, reason: 'Сатурация ещё не рассчитана или нет контакта' };
+  }
+  if (spo2 < MODEL_CONFIG.signals.spo2_min || spo2 > MODEL_CONFIG.signals.spo2_max) {
+    return { isValid: false, spo2, reason: `SpO2 вне диапазона [70, 100]: ${spo2}%` };
+  }
+  return { isValid: true, spo2: Math.round(spo2) };
+}
+
+/**
  * Валидация измерения пульсоксиметра MAX30102
  * @param {number} bpm - ЧСС (уд/мин)
  * @param {number} spo2 - Сатурация (%)
@@ -3472,14 +3508,25 @@ class BLEService {
     let pulseValidation = { isValid: false, bpm: null, spo2: null };
     let currentPulseStatus = 'waiting';
 
-    const rawStatus = String(json.status || json.pulseStatus || '').toLowerCase();
-    const rawBpm = json.heartRate != null ? Number(json.heartRate) : (json.bpm != null ? Number(json.bpm) : (json.hr != null ? Number(json.hr) : null));
+    const rawState = String(json.measurement_state || json.status || json.pulseStatus || '').toUpperCase();
+    const explicitFinger = json.finger_detected != null ? Boolean(json.finger_detected) : null;
+    const signalQuality = String(json.signal_quality || 'MODERATE').toUpperCase();
+
+    const rawBpm = json.heart_rate != null ? Number(json.heart_rate) :
+                  (json.bpm != null ? Number(json.bpm) :
+                  (json.heartRate != null ? Number(json.heartRate) :
+                  (json.hr != null ? Number(json.hr) : null)));
+
     const rawSpo2 = json.spo2 != null ? Number(json.spo2) : (json.o2 != null ? Number(json.o2) : null);
 
+    const isHrValidExplicit = json.heart_rate_valid != null ? Boolean(json.heart_rate_valid) : null;
+    const isSpo2ValidExplicit = json.spo2_valid != null ? Boolean(json.spo2_valid) : null;
+
     const isExplicitNoFinger = (
-      rawStatus === 'no_finger' ||
-      (Number.isFinite(rawBpm) && rawBpm <= 0) ||
-      (Number.isFinite(rawSpo2) && rawSpo2 <= 0)
+      explicitFinger === false ||
+      rawState === 'NO_FINGER' ||
+      rawState === 'NO_CONTACT' ||
+      (explicitFinger === null && Number.isFinite(rawBpm) && rawBpm <= 0 && Number.isFinite(rawSpo2) && rawSpo2 <= 0)
     );
 
     if (isExplicitNoFinger) {
@@ -3491,38 +3538,59 @@ class BLEService {
       validatedBpm = null;
       validatedSpo2 = null;
       pulseValidation = { isValid: false, bpm: null, spo2: null, reason: 'Нет контакта с пальцем (MAX30102)' };
-    } else if (rawStatus === 'calculating') {
+    } else if (rawState === 'DETECTING' || rawState === 'CALCULATING') {
       currentPulseStatus = 'calculating';
-    } else if (rawStatus === 'sensor_error') {
+      this.lastValidPulse = null;
+      validatedBpm = null;
+      validatedSpo2 = null;
+    } else if (rawState === 'SENSOR_ERROR') {
       currentPulseStatus = 'sensor_error';
       this.lastValidPulse = null;
       this.lastPulseTime = null;
-    } else if (rawStatus === 'initializing') {
-      currentPulseStatus = 'initializing';
-    } else if (Number.isFinite(rawBpm) && rawBpm > 0 && Number.isFinite(rawSpo2) && rawSpo2 > 0) {
-      const valRes = validatePulseOximetry(rawBpm, rawSpo2);
-      pulseValidation = valRes;
-      if (valRes && valRes.isValid) {
-        currentPulseStatus = 'ok';
-        hasActivePulse = true;
-        validatedBpm = valRes.bpm;
-        validatedSpo2 = valRes.spo2;
-        this.lastPulseTime = now;
-        this.lastValidPulse = { bpm: validatedBpm, spo2: validatedSpo2, timestamp: now };
-      } else {
-        currentPulseStatus = 'invalid';
-      }
+    } else if (rawState === 'SIGNAL_UNSTABLE') {
+      currentPulseStatus = 'unstable';
     } else {
-      // В этом конкретном пакете данных MAX30102 нет (например, выделенный ЭКГ-пакет)
-      if (this.lastPulseTime && (now - this.lastPulseTime < 3500) && this.lastValidPulse) {
-        // Предыдущий замер пульса еще свежий (менее 3.5 сек)
-        currentPulseStatus = 'ok';
+      // Независимая валидация ЧСС и SpO2
+      if (isHrValidExplicit === true && Number.isFinite(rawBpm) && rawBpm >= 40 && rawBpm <= 200) {
+        validatedBpm = Math.round(rawBpm);
+      } else if (isHrValidExplicit !== false && Number.isFinite(rawBpm) && rawBpm >= 40 && rawBpm <= 200) {
+        const hrRes = validateHeartRate(rawBpm);
+        if (hrRes.isValid) validatedBpm = hrRes.bpm;
+      }
+
+      if (isSpo2ValidExplicit === true && Number.isFinite(rawSpo2) && rawSpo2 >= 80 && rawSpo2 <= 100) {
+        validatedSpo2 = Math.round(rawSpo2);
+      } else if (isSpo2ValidExplicit !== false && Number.isFinite(rawSpo2) && rawSpo2 >= 70 && rawSpo2 <= 100) {
+        const spRes = validateSpO2(rawSpo2);
+        if (spRes.isValid) validatedSpo2 = spRes.spo2;
+      }
+
+      if (validatedBpm != null || validatedSpo2 != null) {
+        currentPulseStatus = (validatedBpm != null && validatedSpo2 != null) ? 'ok' : 'measuring';
         hasActivePulse = true;
-        validatedBpm = this.lastValidPulse.bpm;
-        validatedSpo2 = this.lastValidPulse.spo2;
-        pulseValidation = { isValid: true, bpm: validatedBpm, spo2: validatedSpo2 };
+        this.lastPulseTime = now;
+        this.lastValidPulse = {
+          bpm: validatedBpm != null ? validatedBpm : (this.lastValidPulse?.bpm || null),
+          spo2: validatedSpo2 != null ? validatedSpo2 : (this.lastValidPulse?.spo2 || null),
+          timestamp: now
+        };
+        pulseValidation = {
+          isValid: true,
+          bpm: validatedBpm,
+          spo2: validatedSpo2
+        };
+      } else if (rawState === 'MEASURING') {
+        currentPulseStatus = 'measuring';
       } else {
-        currentPulseStatus = this.pulseSensorStatus === 'disconnected' ? 'disconnected' : 'waiting';
+        if (this.lastPulseTime && (now - this.lastPulseTime < 3500) && this.lastValidPulse) {
+          currentPulseStatus = 'ok';
+          hasActivePulse = true;
+          validatedBpm = this.lastValidPulse.bpm;
+          validatedSpo2 = this.lastValidPulse.spo2;
+          pulseValidation = { isValid: true, bpm: validatedBpm, spo2: validatedSpo2 };
+        } else {
+          currentPulseStatus = this.pulseSensorStatus === 'disconnected' ? 'disconnected' : 'waiting';
+        }
       }
     }
 
@@ -3631,6 +3699,11 @@ class BLEService {
       pulseValidation,
       hasActivePulse,
       pulseSensorStatus: this.pulseSensorStatus,
+      fingerDetected: !isExplicitNoFinger && currentPulseStatus !== 'disconnected',
+      measurementState: rawState || (currentPulseStatus === 'no_finger' ? 'NO_FINGER' : 'VALID'),
+      signalQuality: signalQuality || 'MODERATE',
+      heartRateValid: validatedBpm != null,
+      spo2Valid: validatedSpo2 != null,
 
       // AD8232
       ecg: hasActiveECG ? latestSample : null,
@@ -3890,6 +3963,14 @@ class ECGCanvasService {
     this.lpFiltered = 0.0;
     this.peakSpanEMA = 350.0;     // динамический диапазон для AGC
 
+    // 50 Гц Notch-фильтр (Биквад Direct Form II Transposed, Q=6, fs=250Hz)
+    this.notch_s1 = 0.0;
+    this.notch_s2 = 0.0;
+
+    // Детектор шума / обрыва электродов
+    this.recentSamplesWindow = [];
+    this.isSignalNoisyOrDisconnected = false;
+
     this.invert = false;          // инверсия полярности (если электроды перепутаны)
     this.leadsOff = false;        // обрыв электродов (сообщает ble.js через setLeadsOff)
     this.settleLeft = 0;          // сколько отсчётов ещё идёт подстройка после старта/обрыва
@@ -4020,6 +4101,10 @@ class ECGCanvasService {
     this.drainAccum = 0;
     this.baselineInitialized = false;
     this.lpFiltered = 0.0;
+    this.notch_s1 = 0.0;
+    this.notch_s2 = 0.0;
+    this.recentSamplesWindow = [];
+    this.isSignalNoisyOrDisconnected = false;
     this.invalidRun = 0;
     this.lastRealSampleTime = 0;
     this.lastValidSampleTime = 0;
@@ -4101,32 +4186,65 @@ class ECGCanvasService {
     if (!this.baselineInitialized) {
       this.baselineEMA = adcValue;
       this.lpFiltered = 0.0;
+      this.notch_s1 = 0.0;
+      this.notch_s2 = 0.0;
+      this.recentSamplesWindow = [];
       this.baselineInitialized = true;
       this.settleLeft = SETTLE_SAMPLES; // короткая подстройка: фильтр сходится, линия не рисуется
     }
 
+    // Окно последних отсчетов для выявления обрыва электродов и насыщения наводкой 50 Гц
+    this.recentSamplesWindow.push(adcValue);
+    if (this.recentSamplesWindow.length > 50) {
+      this.recentSamplesWindow.shift();
+      let minVal = 4095;
+      let maxVal = 0;
+      for (let s = 0; s < this.recentSamplesWindow.length; s++) {
+        if (this.recentSamplesWindow[s] < minVal) minVal = this.recentSamplesWindow[s];
+        if (this.recentSamplesWindow[s] > maxVal) maxVal = this.recentSamplesWindow[s];
+      }
+      // Если размах превышает 2200 отсчетов (rail-to-rail колебания висящих проводов)
+      // или если сигнал прилип к границам ADC
+      const span = maxVal - minVal;
+      this.isSignalNoisyOrDisconnected = (span > 2200) || (minVal <= 60 && maxVal >= 3900);
+    }
+
     // 1. Удаление постоянной составляющей и дрейфа изолинии (high-pass ~0.5 Гц).
-    // Изолиния — бегущее среднее самого сигнала, а не константа 2048: выход AD8232
-    // сидит около 1.5 В (≈1800–2000 отсчётов) и плавает от электродов и кожи.
     const settling = this.settleLeft > 0;
     this.baselineEMA += (adcValue - this.baselineEMA) * (settling ? SETTLE_HP_ALPHA : HP_ALPHA);
     const acSignal = adcValue - this.baselineEMA;
 
     this._trackWindowStats(adcValue, acSignal);
 
-    // 2. Низкочастотный IIR-фильтр (~25 Гц): сглаживает ВЧ-шум.
-    // Однополюсный фильтр сетевую наводку 50 Гц заметно не подавляет.
-    this.lpFiltered += (acSignal - this.lpFiltered) * LP_ALPHA;
+    // 2. Режекторный Notch-фильтр 50 Гц (подавление сетевой наводки 220В)
+    // Direct Form II Transposed: b0=0.926566, b1=-0.572649, b2=0.926566, a1=-0.572649, a2=0.853130
+    const nb0 = 0.926566;
+    const nb1 = -0.572649;
+    const nb2 = 0.926566;
+    const na1 = -0.572649;
+    const na2 = 0.853130;
+
+    const notchFiltered = nb0 * acSignal + this.notch_s1;
+    this.notch_s1 = nb1 * acSignal - na1 * notchFiltered + this.notch_s2;
+    this.notch_s2 = nb2 * acSignal - na2 * notchFiltered;
+
+    // 3. Низкочастотный IIR-фильтр (~25 Гц): сглаживание остаточного шума
+    this.lpFiltered += (notchFiltered - this.lpFiltered) * LP_ALPHA;
+
+    // Если электроды отсоединены или ловят дикую наводку - держим спокойную изолинию вместо частокола
+    if (this.isSignalNoisyOrDisconnected) {
+      this._enqueue(0.0);
+      return;
+    }
 
     // Во время подстройки линию не рисуем (NaN) и AGC не трогаем:
-    // переходный процесс не должен раздувать масштаб и «топить» сигнал вниз.
     if (settling) {
       this.settleLeft--;
       this._enqueue(NaN);
       return;
     }
 
-    // 3. Автоматическая подстройка масштаба (AGC) с верхним пределом
+    // 4. Автоматическая подстройка масштаба (AGC) с физиологическим коридором
     const absVal = Math.abs(this.lpFiltered);
     if (absVal > this.peakSpanEMA) {
       this.peakSpanEMA = Math.min(PEAK_SPAN_MAX, this.peakSpanEMA * 0.95 + absVal * 0.05);
@@ -4134,14 +4252,14 @@ class ECGCanvasService {
       this.peakSpanEMA = Math.max(120.0, this.peakSpanEMA * 0.9995);
     }
 
-    // 4. Нормализация в диапазон около [-1.0, 1.0]
-    const scaleFactor = Math.max(160.0, this.peakSpanEMA * 1.35);
+    // 5. Нормализация в диапазон [-0.85, 0.85]
+    const scaleFactor = Math.max(220.0, this.peakSpanEMA * 1.4);
     let norm = this.lpFiltered / scaleFactor;
-    if (this.invert) norm = -norm; // полярность перевёрнута (электроды перепутаны)
+    if (this.invert) norm = -norm;
 
-    // Мягкое скругление вместо жёсткого клиппинга
-    if (norm > 1.25) norm = 1.25 + Math.tanh(norm - 1.25) * 0.25;
-    if (norm < -1.25) norm = -1.25 + Math.tanh(norm + 1.25) * 0.25;
+    // Мягкое скругление
+    if (norm > 0.85) norm = 0.85 + Math.tanh(norm - 0.85) * 0.15;
+    if (norm < -0.85) norm = -0.85 + Math.tanh(norm + 0.85) * 0.15;
 
     this._enqueue(norm);
   }
@@ -4242,7 +4360,7 @@ class ECGCanvasService {
       return { key: 'demo', live: true, text: 'ДЕМО 250 Гц', cls: PILL_AMBER };
     }
 
-    if (this.leadsOff) {
+    if (this.leadsOff || this.isSignalNoisyOrDisconnected) {
       return { key: 'leads_off', live: false, text: 'Электроды не подключены', cls: PILL_RED };
     }
 
@@ -4650,6 +4768,10 @@ const App = {
       this.goToSurveyStep(1);
     }
 
+    // Проверка административного маршрута (#admin, #admin/dashboard)
+    this.checkAdminRoute();
+    window.addEventListener('hashchange', () => this.checkAdminRoute());
+
     // Сторожевой таймер активности реальных датчиков (Watchdog)
     setInterval(() => {
       if (this.state.isConnected && !this.state.isDemo) {
@@ -4712,7 +4834,7 @@ const App = {
   // ========================================================
   showScreen(screenId) {
     this.state.currentScreen = screenId;
-    ['screen-onboarding-connect', 'screen-onboarding-survey', 'screen-main-app'].forEach(id => {
+    ['screen-onboarding-connect', 'screen-onboarding-survey', 'screen-main-app', 'screen-admin', 'screen-admin-dashboard'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         el.classList.add('hidden');
@@ -4733,6 +4855,11 @@ const App = {
       if (this.state.isDemo || this.state.isConnected) {
         this.ecgCanvas.setStreamActive(true, this.state.isDemo);
       }
+    } else if (screenId === 'admin') {
+      this.renderAdminPanel();
+    } else if (screenId === 'admin-dashboard') {
+      this.renderAdminDashboard();
+      this.startAdminSyntheticECG();
     }
   },
 
@@ -4849,10 +4976,20 @@ const App = {
     const now = Date.now();
     this.state.lastTelemetryTimestamp = now;
 
+    // Сохраняем расширенные атрибуты BLE-телеметрии
+    this.state.fingerDetected = data.fingerDetected != null ? data.fingerDetected : (data.pulseSensorStatus !== 'no_finger');
+    this.state.measurementState = data.measurementState || (this.state.fingerDetected ? 'VALID' : 'NO_FINGER');
+    this.state.signalQuality = data.signalQuality || 'MODERATE';
+    this.state.rawBLEPacket = data.rawJSON || null;
+
     // 1. НЕЗАВИСИМАЯ ОБРАБОТКА ДАТЧИКА ПУЛЬСОКСИМЕТРИИ MAX30102
-    if (data.hasActivePulse && data.bpm != null && data.bpm > 0) {
-      this.state.bpm = data.bpm;
-      this.state.spo2 = data.spo2;
+    if (this.state.fingerDetected && data.hasActivePulse) {
+      if (data.bpm != null && data.bpm > 0) {
+        this.state.bpm = data.bpm;
+      }
+      if (data.spo2 != null && data.spo2 > 0) {
+        this.state.spo2 = data.spo2;
+      }
       this.state.lastPulseTimestamp = now;
       this.state.pulseSensorStatus = data.pulseSensorStatus || 'ok';
     } else {
@@ -4967,6 +5104,13 @@ const App = {
     if (this.state.currentSurveyStep === 4) {
       this.updateSurveyDeviceStatus();
     }
+
+    this.state.lastRawJSON = data.rawJSON;
+    if (this.state.currentScreen === 'admin') {
+      this.renderAdminPanel();
+    } else if (this.state.currentScreen === 'admin-dashboard') {
+      this.renderAdminDashboard();
+    }
   },
 
   handleBLEStatusChange(status) {
@@ -5009,6 +5153,11 @@ const App = {
     this.renderDashboardMetrics();
     if (this.state.currentSurveyStep === 4) {
       this.updateSurveyDeviceStatus();
+    }
+    if (this.state.currentScreen === 'admin') {
+      this.renderAdminPanel();
+    } else if (this.state.currentScreen === 'admin-dashboard') {
+      this.renderAdminDashboard();
     }
   },
 
@@ -7775,6 +7924,340 @@ const App = {
       circleEl.style.borderColor = '#10b981';
       circleEl.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
     }
+  },
+
+  // ========================================================
+  // АДМИНИСТРАТИВНАЯ ПАНЕЛЬ И ВХОД (Strict Password: 2020)
+  // ========================================================
+  _logoClicks: 0,
+  _lastLogoClick: 0,
+  _adminECGAnimId: null,
+
+  handleLogoClick(event) {
+    if (event) event.stopPropagation();
+    const now = Date.now();
+    if (now - this._lastLogoClick > 3000) {
+      this._logoClicks = 0;
+    }
+    this._lastLogoClick = now;
+    this._logoClicks++;
+
+    if (this._logoClicks >= 5) {
+      this._logoClicks = 0;
+      this.openAdminAuthModal();
+    }
+  },
+
+  openAdminAuthModal() {
+    const modal = document.getElementById('modal-admin-auth');
+    const input = document.getElementById('admin-auth-pass');
+    const errorBox = document.getElementById('admin-auth-error');
+    if (errorBox) {
+      errorBox.textContent = '';
+      errorBox.classList.add('hidden');
+    }
+    if (input) input.value = '';
+    if (modal) modal.classList.remove('hidden');
+    setTimeout(() => { if (input) input.focus(); }, 100);
+  },
+
+  closeAdminAuthModal() {
+    const modal = document.getElementById('modal-admin-auth');
+    if (modal) modal.classList.add('hidden');
+  },
+
+  async submitAdminAuth() {
+    const input = document.getElementById('admin-auth-pass');
+    const errorBox = document.getElementById('admin-auth-error');
+    const submitBtn = document.getElementById('admin-auth-submit-btn');
+    const password = input ? input.value : '';
+
+    if (!password) return;
+
+    if (submitBtn) submitBtn.disabled = true;
+    if (errorBox) errorBox.classList.add('hidden');
+
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'login', password })
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success && data.token) {
+        sessionStorage.setItem('qamqor_admin_token', data.token);
+        this.closeAdminAuthModal();
+        window.location.hash = '#admin';
+        this.showScreen('admin');
+        this.showToast('Авторизация успешна. Добро пожаловать в консоль инженера!', 'success');
+      } else {
+        const msg = data.error || 'Неверный пароль';
+        if (errorBox) {
+          errorBox.textContent = msg;
+          errorBox.classList.remove('hidden');
+        }
+      }
+    } catch (e) {
+      if (errorBox) {
+        errorBox.textContent = 'Ошибка соединения с сервером авторизации';
+        errorBox.classList.remove('hidden');
+      }
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  },
+
+  async checkAdminRoute() {
+    const hash = window.location.hash || '';
+    const path = window.location.pathname || '';
+    const isAdmin = hash === '#admin' || hash.startsWith('#admin') || path.startsWith('/admin');
+
+    if (!isAdmin) return;
+
+    const token = sessionStorage.getItem('qamqor_admin_token');
+    if (!token) {
+      if (this.state.currentScreen === 'admin' || this.state.currentScreen === 'admin-dashboard') {
+        this.showScreen('main-app');
+      }
+      this.openAdminAuthModal();
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'verify', token })
+      });
+      const data = await res.json();
+      if (res.ok && data.valid) {
+        if (hash === '#admin/dashboard' || path === '/admin/dashboard') {
+          this.showScreen('admin-dashboard');
+        } else {
+          this.showScreen('admin');
+        }
+      } else {
+        sessionStorage.removeItem('qamqor_admin_token');
+        this.showScreen('main-app');
+        this.openAdminAuthModal();
+      }
+    } catch {
+      if (hash === '#admin/dashboard' || path === '/admin/dashboard') {
+        this.showScreen('admin-dashboard');
+      } else {
+        this.showScreen('admin');
+      }
+    }
+  },
+
+  adminLogout() {
+    sessionStorage.removeItem('qamqor_admin_token');
+    if (this._adminECGAnimId) {
+      cancelAnimationFrame(this._adminECGAnimId);
+      this._adminECGAnimId = null;
+    }
+    window.location.hash = '';
+    this.showScreen('main-app');
+    this.showToast('Вы вышли из консоли администратора', 'info');
+  },
+
+  openAdminDashboard() {
+    window.location.hash = '#admin/dashboard';
+    this.showScreen('admin-dashboard');
+  },
+
+  renderAdminPanel() {
+    const blePill = document.getElementById('admin-ble-status-pill');
+    const bleDot = document.getElementById('admin-ble-dot');
+    const fingerEl = document.getElementById('admin-status-finger');
+    const qualityEl = document.getElementById('admin-status-quality');
+    const hrEl = document.getElementById('admin-status-hr');
+    const spo2El = document.getElementById('admin-status-spo2');
+    const rawPktEl = document.getElementById('admin-raw-packet');
+    const pktCountEl = document.getElementById('admin-pkt-counter');
+
+    const lstatEl = document.getElementById('admin-model-lstat');
+    const ldynEl = document.getElementById('admin-model-ldyn');
+    const qscoreEl = document.getElementById('admin-model-qscore');
+
+    if (blePill && bleDot) {
+      if (this.state.isConnected) {
+        blePill.textContent = 'Подключено';
+        blePill.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800';
+        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
+      } else {
+        blePill.textContent = 'Отключено';
+        blePill.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700';
+        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
+      }
+    }
+
+    const finger = this.state.fingerDetected ?? (this.state.pulseSensorStatus === 'ok');
+    const stateStr = this.state.measurementState || (finger ? 'VALID' : 'NO_FINGER');
+    const qualityStr = this.state.signalQuality || (finger ? 'GOOD' : 'POOR');
+
+    if (fingerEl) fingerEl.textContent = stateStr;
+    if (qualityEl) qualityEl.textContent = qualityStr;
+
+    const hrVal = (finger && this.state.bpm) ? `${this.state.bpm} уд/мин (true)` : '— (false)';
+    const spVal = (finger && this.state.spo2) ? `${this.state.spo2}% (true)` : '— (false)';
+
+    if (hrEl) hrEl.textContent = hrVal;
+    if (spo2El) spo2El.textContent = spVal;
+
+    if (rawPktEl && this.state.lastRawJSON) {
+      rawPktEl.textContent = JSON.stringify(this.state.lastRawJSON, null, 2);
+    }
+    if (pktCountEl && this.bleService) {
+      pktCountEl.textContent = `Пакет #${this.bleService.packetCount || 0}`;
+    }
+
+    if (lstatEl && this.state.lStatResult) {
+      lstatEl.textContent = this.state.lStatResult.score != null ? this.state.lStatResult.score.toFixed(1) : '—';
+    }
+    if (ldynEl && this.state.lDynResult) {
+      ldynEl.textContent = this.state.lDynResult.score != null ? this.state.lDynResult.score.toFixed(1) : '—';
+    }
+    if (qscoreEl && this.state.qualityResult) {
+      qscoreEl.textContent = this.state.qualityResult.score != null ? this.state.qualityResult.score.toFixed(1) : '—';
+    }
+  },
+
+  renderAdminDashboard() {
+    const bpmEl = document.getElementById('admin-dash-bpm');
+    const bpmStatus = document.getElementById('admin-dash-bpm-status');
+    const bpmDot = document.getElementById('admin-dash-bpm-dot');
+
+    const spo2El = document.getElementById('admin-dash-spo2');
+    const spo2Status = document.getElementById('admin-dash-spo2-status');
+    const spo2Dot = document.getElementById('admin-dash-spo2-dot');
+
+    const contactEl = document.getElementById('admin-dash-contact');
+    const qualityEl = document.getElementById('admin-dash-quality');
+    const contactDot = document.getElementById('admin-dash-contact-dot');
+
+    const timeEl = document.getElementById('admin-dash-last-time');
+    const bleStateEl = document.getElementById('admin-dash-ble-state');
+    const bleDot = document.getElementById('admin-dash-ble-dot');
+
+    const bpmLabel = document.getElementById('admin-ecg-bpm-label');
+
+    const finger = this.state.fingerDetected ?? (this.state.pulseSensorStatus === 'ok');
+
+    // КРИТИЧНО: При отсутствии пальца (NO FINGER) строго показывать '--', не зависать!
+    if (!finger || !this.state.isConnected) {
+      if (bpmEl) bpmEl.textContent = '—';
+      if (bpmStatus) bpmStatus.textContent = 'NO FINGER';
+      if (bpmDot) bpmDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
+
+      if (spo2El) spo2El.textContent = '—';
+      if (spo2Status) spo2Status.textContent = 'NO FINGER';
+      if (spo2Dot) spo2Dot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
+
+      if (contactEl) contactEl.textContent = 'NO FINGER';
+      if (qualityEl) qualityEl.textContent = 'Качество: POOR';
+      if (contactDot) contactDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+    } else {
+      if (bpmEl) bpmEl.textContent = this.state.bpm ? this.state.bpm : '—';
+      if (bpmStatus) bpmStatus.textContent = this.state.bpm ? 'VALID' : 'MEASURING...';
+      if (bpmDot) bpmDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse';
+
+      if (spo2El) spo2El.textContent = this.state.spo2 ? this.state.spo2 : '—';
+      if (spo2Status) spo2Status.textContent = this.state.spo2 ? 'VALID' : 'CALCULATING...';
+      if (spo2Dot) spo2Dot.className = 'w-2.5 h-2.5 rounded-full bg-sky-500';
+
+      if (contactEl) contactEl.textContent = this.state.measurementState || 'VALID';
+      if (qualityEl) qualityEl.textContent = `Качество: ${this.state.signalQuality || 'GOOD'}`;
+      if (contactDot) contactDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+    }
+
+    if (this.state.lastPulseTimestamp > 0) {
+      const d = new Date(this.state.lastPulseTimestamp);
+      if (timeEl) timeEl.textContent = d.toTimeString().split(' ')[0];
+    } else {
+      if (timeEl) timeEl.textContent = '--:--:--';
+    }
+
+    if (bleStateEl && bleDot) {
+      if (this.state.isConnected) {
+        bleStateEl.textContent = `BLE: ${this.state.deviceName || 'Qamqor Band'}`;
+        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+      } else {
+        bleStateEl.textContent = 'BLE: Отключено';
+        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
+      }
+    }
+
+    if (bpmLabel) {
+      bpmLabel.textContent = `${this.state.bpm || 72} уд/мин`;
+    }
+  },
+
+  startAdminSyntheticECG() {
+    if (this._adminECGAnimId) return;
+    const canvas = document.getElementById('adminECGCanvas');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    let t = 0;
+    const fs = 250;
+    const dt = 1 / fs;
+    let sweepX = 0;
+    const pxPerSec = 125;
+    const pxPerSample = pxPerSec / fs;
+
+    const draw = () => {
+      if (this.state.currentScreen !== 'admin-dashboard') {
+        this._adminECGAnimId = null;
+        return;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const dpr = window.devicePixelRatio || 1;
+        const targetW = Math.floor(rect.width * dpr);
+        const targetH = Math.floor(rect.height * dpr);
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+          canvas.width = targetW;
+          canvas.height = targetH;
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.scale(dpr, dpr);
+        }
+
+        const w = rect.width;
+        const h = rect.height;
+        const midY = h / 2;
+
+        const bpm = (this.state.fingerDetected && this.state.bpm) ? this.state.bpm : 72;
+        const samplesPerFrame = Math.round(fs / 60);
+
+        for (let i = 0; i < samplesPerFrame; i++) {
+          const val = this.ecgCanvas.generateSyntheticECG(t, bpm);
+          t += dt;
+
+          const nextX = (sweepX + pxPerSample) % w;
+          ctx.fillStyle = '#060b13';
+          ctx.fillRect(sweepX, 0, 16, h);
+
+          ctx.strokeStyle = '#34d399';
+          ctx.shadowColor = '#10b981';
+          ctx.shadowBlur = 4;
+          ctx.lineWidth = 2.0;
+          ctx.beginPath();
+          ctx.moveTo(sweepX, midY - val * (h * 0.38));
+          ctx.lineTo(nextX, midY - val * (h * 0.38));
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+
+          sweepX = nextX;
+        }
+      }
+
+      this._adminECGAnimId = requestAnimationFrame(draw);
+    };
+
+    this._adminECGAnimId = requestAnimationFrame(draw);
   },
 
   registerSW() {

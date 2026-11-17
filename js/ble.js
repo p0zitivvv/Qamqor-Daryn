@@ -13,6 +13,8 @@
 import { MODEL_CONFIG } from './config.js';
 import {
   validatePulseOximetry,
+  validateHeartRate,
+  validateSpO2,
   RPeakDetector,
   checkECGSignalQuality
 } from './signals.js';
@@ -661,14 +663,25 @@ export class BLEService {
     let pulseValidation = { isValid: false, bpm: null, spo2: null };
     let currentPulseStatus = 'waiting';
 
-    const rawStatus = String(json.status || json.pulseStatus || '').toLowerCase();
-    const rawBpm = json.heartRate != null ? Number(json.heartRate) : (json.bpm != null ? Number(json.bpm) : (json.hr != null ? Number(json.hr) : null));
+    const rawState = String(json.measurement_state || json.status || json.pulseStatus || '').toUpperCase();
+    const explicitFinger = json.finger_detected != null ? Boolean(json.finger_detected) : null;
+    const signalQuality = String(json.signal_quality || 'MODERATE').toUpperCase();
+
+    const rawBpm = json.heart_rate != null ? Number(json.heart_rate) :
+                  (json.bpm != null ? Number(json.bpm) :
+                  (json.heartRate != null ? Number(json.heartRate) :
+                  (json.hr != null ? Number(json.hr) : null)));
+
     const rawSpo2 = json.spo2 != null ? Number(json.spo2) : (json.o2 != null ? Number(json.o2) : null);
 
+    const isHrValidExplicit = json.heart_rate_valid != null ? Boolean(json.heart_rate_valid) : null;
+    const isSpo2ValidExplicit = json.spo2_valid != null ? Boolean(json.spo2_valid) : null;
+
     const isExplicitNoFinger = (
-      rawStatus === 'no_finger' ||
-      (Number.isFinite(rawBpm) && rawBpm <= 0) ||
-      (Number.isFinite(rawSpo2) && rawSpo2 <= 0)
+      explicitFinger === false ||
+      rawState === 'NO_FINGER' ||
+      rawState === 'NO_CONTACT' ||
+      (explicitFinger === null && Number.isFinite(rawBpm) && rawBpm <= 0 && Number.isFinite(rawSpo2) && rawSpo2 <= 0)
     );
 
     if (isExplicitNoFinger) {
@@ -680,38 +693,59 @@ export class BLEService {
       validatedBpm = null;
       validatedSpo2 = null;
       pulseValidation = { isValid: false, bpm: null, spo2: null, reason: 'Нет контакта с пальцем (MAX30102)' };
-    } else if (rawStatus === 'calculating') {
+    } else if (rawState === 'DETECTING' || rawState === 'CALCULATING') {
       currentPulseStatus = 'calculating';
-    } else if (rawStatus === 'sensor_error') {
+      this.lastValidPulse = null;
+      validatedBpm = null;
+      validatedSpo2 = null;
+    } else if (rawState === 'SENSOR_ERROR') {
       currentPulseStatus = 'sensor_error';
       this.lastValidPulse = null;
       this.lastPulseTime = null;
-    } else if (rawStatus === 'initializing') {
-      currentPulseStatus = 'initializing';
-    } else if (Number.isFinite(rawBpm) && rawBpm > 0 && Number.isFinite(rawSpo2) && rawSpo2 > 0) {
-      const valRes = validatePulseOximetry(rawBpm, rawSpo2);
-      pulseValidation = valRes;
-      if (valRes && valRes.isValid) {
-        currentPulseStatus = 'ok';
-        hasActivePulse = true;
-        validatedBpm = valRes.bpm;
-        validatedSpo2 = valRes.spo2;
-        this.lastPulseTime = now;
-        this.lastValidPulse = { bpm: validatedBpm, spo2: validatedSpo2, timestamp: now };
-      } else {
-        currentPulseStatus = 'invalid';
-      }
+    } else if (rawState === 'SIGNAL_UNSTABLE') {
+      currentPulseStatus = 'unstable';
     } else {
-      // В этом конкретном пакете данных MAX30102 нет (например, выделенный ЭКГ-пакет)
-      if (this.lastPulseTime && (now - this.lastPulseTime < 3500) && this.lastValidPulse) {
-        // Предыдущий замер пульса еще свежий (менее 3.5 сек)
-        currentPulseStatus = 'ok';
+      // Независимая валидация ЧСС и SpO2
+      if (isHrValidExplicit === true && Number.isFinite(rawBpm) && rawBpm >= 40 && rawBpm <= 200) {
+        validatedBpm = Math.round(rawBpm);
+      } else if (isHrValidExplicit !== false && Number.isFinite(rawBpm) && rawBpm >= 40 && rawBpm <= 200) {
+        const hrRes = validateHeartRate(rawBpm);
+        if (hrRes.isValid) validatedBpm = hrRes.bpm;
+      }
+
+      if (isSpo2ValidExplicit === true && Number.isFinite(rawSpo2) && rawSpo2 >= 80 && rawSpo2 <= 100) {
+        validatedSpo2 = Math.round(rawSpo2);
+      } else if (isSpo2ValidExplicit !== false && Number.isFinite(rawSpo2) && rawSpo2 >= 70 && rawSpo2 <= 100) {
+        const spRes = validateSpO2(rawSpo2);
+        if (spRes.isValid) validatedSpo2 = spRes.spo2;
+      }
+
+      if (validatedBpm != null || validatedSpo2 != null) {
+        currentPulseStatus = (validatedBpm != null && validatedSpo2 != null) ? 'ok' : 'measuring';
         hasActivePulse = true;
-        validatedBpm = this.lastValidPulse.bpm;
-        validatedSpo2 = this.lastValidPulse.spo2;
-        pulseValidation = { isValid: true, bpm: validatedBpm, spo2: validatedSpo2 };
+        this.lastPulseTime = now;
+        this.lastValidPulse = {
+          bpm: validatedBpm != null ? validatedBpm : (this.lastValidPulse?.bpm || null),
+          spo2: validatedSpo2 != null ? validatedSpo2 : (this.lastValidPulse?.spo2 || null),
+          timestamp: now
+        };
+        pulseValidation = {
+          isValid: true,
+          bpm: validatedBpm,
+          spo2: validatedSpo2
+        };
+      } else if (rawState === 'MEASURING') {
+        currentPulseStatus = 'measuring';
       } else {
-        currentPulseStatus = this.pulseSensorStatus === 'disconnected' ? 'disconnected' : 'waiting';
+        if (this.lastPulseTime && (now - this.lastPulseTime < 3500) && this.lastValidPulse) {
+          currentPulseStatus = 'ok';
+          hasActivePulse = true;
+          validatedBpm = this.lastValidPulse.bpm;
+          validatedSpo2 = this.lastValidPulse.spo2;
+          pulseValidation = { isValid: true, bpm: validatedBpm, spo2: validatedSpo2 };
+        } else {
+          currentPulseStatus = this.pulseSensorStatus === 'disconnected' ? 'disconnected' : 'waiting';
+        }
       }
     }
 
@@ -820,6 +854,11 @@ export class BLEService {
       pulseValidation,
       hasActivePulse,
       pulseSensorStatus: this.pulseSensorStatus,
+      fingerDetected: !isExplicitNoFinger && currentPulseStatus !== 'disconnected',
+      measurementState: rawState || (currentPulseStatus === 'no_finger' ? 'NO_FINGER' : 'VALID'),
+      signalQuality: signalQuality || 'MODERATE',
+      heartRateValid: validatedBpm != null,
+      spo2Valid: validatedSpo2 != null,
 
       // AD8232
       ecg: hasActiveECG ? latestSample : null,

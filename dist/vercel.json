@@ -1,6 +1,10 @@
 {
   "version": 2,
   "cleanUrls": false,
+  "rewrites": [
+    { "source": "/admin", "destination": "/index.html" },
+    { "source": "/admin/dashboard", "destination": "/index.html" }
+  ],
   "headers": [
     {
       "source": "/(.*)",

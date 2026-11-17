@@ -7,6 +7,42 @@
 import { MODEL_CONFIG } from './config.js';
 
 /**
+ * Валидация измерения ЧСС (уд/мин)
+ * @param {number} bpm
+ * @returns {Object} { isValid, bpm, reason }
+ */
+export function validateHeartRate(bpm) {
+  if (typeof bpm !== 'number' || isNaN(bpm)) {
+    return { isValid: false, reason: 'ЧСС должен быть числом' };
+  }
+  if (bpm <= 0) {
+    return { isValid: false, reason: 'Нет контакта с датчиком' };
+  }
+  if (bpm < MODEL_CONFIG.signals.hr_min || bpm > MODEL_CONFIG.signals.hr_max) {
+    return { isValid: false, bpm, reason: `Пульс вне физиологического диапазона [30, 220]: ${bpm}` };
+  }
+  return { isValid: true, bpm: Math.round(bpm) };
+}
+
+/**
+ * Валидация измерения SpO2 (%)
+ * @param {number} spo2
+ * @returns {Object} { isValid, spo2, reason }
+ */
+export function validateSpO2(spo2) {
+  if (typeof spo2 !== 'number' || isNaN(spo2)) {
+    return { isValid: false, reason: 'SpO2 должен быть числом' };
+  }
+  if (spo2 <= 0) {
+    return { isValid: false, reason: 'Сатурация ещё не рассчитана или нет контакта' };
+  }
+  if (spo2 < MODEL_CONFIG.signals.spo2_min || spo2 > MODEL_CONFIG.signals.spo2_max) {
+    return { isValid: false, spo2, reason: `SpO2 вне диапазона [70, 100]: ${spo2}%` };
+  }
+  return { isValid: true, spo2: Math.round(spo2) };
+}
+
+/**
  * Валидация измерения пульсоксиметра MAX30102
  * @param {number} bpm - ЧСС (уд/мин)
  * @param {number} spo2 - Сатурация (%)

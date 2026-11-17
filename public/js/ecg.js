@@ -83,6 +83,14 @@ export class ECGCanvasService {
     this.lpFiltered = 0.0;
     this.peakSpanEMA = 350.0;     // динамический диапазон для AGC
 
+    // 50 Гц Notch-фильтр (Биквад Direct Form II Transposed, Q=6, fs=250Hz)
+    this.notch_s1 = 0.0;
+    this.notch_s2 = 0.0;
+
+    // Детектор шума / обрыва электродов
+    this.recentSamplesWindow = [];
+    this.isSignalNoisyOrDisconnected = false;
+
     this.invert = false;          // инверсия полярности (если электроды перепутаны)
     this.leadsOff = false;        // обрыв электродов (сообщает ble.js через setLeadsOff)
     this.settleLeft = 0;          // сколько отсчётов ещё идёт подстройка после старта/обрыва
@@ -213,6 +221,10 @@ export class ECGCanvasService {
     this.drainAccum = 0;
     this.baselineInitialized = false;
     this.lpFiltered = 0.0;
+    this.notch_s1 = 0.0;
+    this.notch_s2 = 0.0;
+    this.recentSamplesWindow = [];
+    this.isSignalNoisyOrDisconnected = false;
     this.invalidRun = 0;
     this.lastRealSampleTime = 0;
     this.lastValidSampleTime = 0;
@@ -294,32 +306,65 @@ export class ECGCanvasService {
     if (!this.baselineInitialized) {
       this.baselineEMA = adcValue;
       this.lpFiltered = 0.0;
+      this.notch_s1 = 0.0;
+      this.notch_s2 = 0.0;
+      this.recentSamplesWindow = [];
       this.baselineInitialized = true;
       this.settleLeft = SETTLE_SAMPLES; // короткая подстройка: фильтр сходится, линия не рисуется
     }
 
+    // Окно последних отсчетов для выявления обрыва электродов и насыщения наводкой 50 Гц
+    this.recentSamplesWindow.push(adcValue);
+    if (this.recentSamplesWindow.length > 50) {
+      this.recentSamplesWindow.shift();
+      let minVal = 4095;
+      let maxVal = 0;
+      for (let s = 0; s < this.recentSamplesWindow.length; s++) {
+        if (this.recentSamplesWindow[s] < minVal) minVal = this.recentSamplesWindow[s];
+        if (this.recentSamplesWindow[s] > maxVal) maxVal = this.recentSamplesWindow[s];
+      }
+      // Если размах превышает 2200 отсчетов (rail-to-rail колебания висящих проводов)
+      // или если сигнал прилип к границам ADC
+      const span = maxVal - minVal;
+      this.isSignalNoisyOrDisconnected = (span > 2200) || (minVal <= 60 && maxVal >= 3900);
+    }
+
     // 1. Удаление постоянной составляющей и дрейфа изолинии (high-pass ~0.5 Гц).
-    // Изолиния — бегущее среднее самого сигнала, а не константа 2048: выход AD8232
-    // сидит около 1.5 В (≈1800–2000 отсчётов) и плавает от электродов и кожи.
     const settling = this.settleLeft > 0;
     this.baselineEMA += (adcValue - this.baselineEMA) * (settling ? SETTLE_HP_ALPHA : HP_ALPHA);
     const acSignal = adcValue - this.baselineEMA;
 
     this._trackWindowStats(adcValue, acSignal);
 
-    // 2. Низкочастотный IIR-фильтр (~25 Гц): сглаживает ВЧ-шум.
-    // Однополюсный фильтр сетевую наводку 50 Гц заметно не подавляет.
-    this.lpFiltered += (acSignal - this.lpFiltered) * LP_ALPHA;
+    // 2. Режекторный Notch-фильтр 50 Гц (подавление сетевой наводки 220В)
+    // Direct Form II Transposed: b0=0.926566, b1=-0.572649, b2=0.926566, a1=-0.572649, a2=0.853130
+    const nb0 = 0.926566;
+    const nb1 = -0.572649;
+    const nb2 = 0.926566;
+    const na1 = -0.572649;
+    const na2 = 0.853130;
+
+    const notchFiltered = nb0 * acSignal + this.notch_s1;
+    this.notch_s1 = nb1 * acSignal - na1 * notchFiltered + this.notch_s2;
+    this.notch_s2 = nb2 * acSignal - na2 * notchFiltered;
+
+    // 3. Низкочастотный IIR-фильтр (~25 Гц): сглаживание остаточного шума
+    this.lpFiltered += (notchFiltered - this.lpFiltered) * LP_ALPHA;
+
+    // Если электроды отсоединены или ловят дикую наводку - держим спокойную изолинию вместо частокола
+    if (this.isSignalNoisyOrDisconnected) {
+      this._enqueue(0.0);
+      return;
+    }
 
     // Во время подстройки линию не рисуем (NaN) и AGC не трогаем:
-    // переходный процесс не должен раздувать масштаб и «топить» сигнал вниз.
     if (settling) {
       this.settleLeft--;
       this._enqueue(NaN);
       return;
     }
 
-    // 3. Автоматическая подстройка масштаба (AGC) с верхним пределом
+    // 4. Автоматическая подстройка масштаба (AGC) с физиологическим коридором
     const absVal = Math.abs(this.lpFiltered);
     if (absVal > this.peakSpanEMA) {
       this.peakSpanEMA = Math.min(PEAK_SPAN_MAX, this.peakSpanEMA * 0.95 + absVal * 0.05);
@@ -327,14 +372,14 @@ export class ECGCanvasService {
       this.peakSpanEMA = Math.max(120.0, this.peakSpanEMA * 0.9995);
     }
 
-    // 4. Нормализация в диапазон около [-1.0, 1.0]
-    const scaleFactor = Math.max(160.0, this.peakSpanEMA * 1.35);
+    // 5. Нормализация в диапазон [-0.85, 0.85]
+    const scaleFactor = Math.max(220.0, this.peakSpanEMA * 1.4);
     let norm = this.lpFiltered / scaleFactor;
-    if (this.invert) norm = -norm; // полярность перевёрнута (электроды перепутаны)
+    if (this.invert) norm = -norm;
 
-    // Мягкое скругление вместо жёсткого клиппинга
-    if (norm > 1.25) norm = 1.25 + Math.tanh(norm - 1.25) * 0.25;
-    if (norm < -1.25) norm = -1.25 + Math.tanh(norm + 1.25) * 0.25;
+    // Мягкое скругление
+    if (norm > 0.85) norm = 0.85 + Math.tanh(norm - 0.85) * 0.15;
+    if (norm < -0.85) norm = -0.85 + Math.tanh(norm + 0.85) * 0.15;
 
     this._enqueue(norm);
   }
@@ -435,7 +480,7 @@ export class ECGCanvasService {
       return { key: 'demo', live: true, text: 'ДЕМО 250 Гц', cls: PILL_AMBER };
     }
 
-    if (this.leadsOff) {
+    if (this.leadsOff || this.isSignalNoisyOrDisconnected) {
       return { key: 'leads_off', live: false, text: 'Электроды не подключены', cls: PILL_RED };
     }
 

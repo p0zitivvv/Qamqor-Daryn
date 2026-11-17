@@ -83,6 +83,55 @@ volatile uint32_t ecgTail = 0;
 volatile bool currentLeadsOff = false;
 volatile uint16_t lastEcgSample = 2048;
 
+// --- СОСТОЯНИЯ ИЗМЕРЕНИЙ И КОНТАКТА ---
+enum MeasurementState {
+  STATE_NO_FINGER,
+  STATE_DETECTING,
+  STATE_SIGNAL_UNSTABLE,
+  STATE_MEASURING,
+  STATE_VALID,
+  STATE_SENSOR_ERROR
+};
+
+enum SignalQuality {
+  QUALITY_POOR,
+  QUALITY_MODERATE,
+  QUALITY_GOOD
+};
+
+volatile MeasurementState currentMeasurementState = STATE_NO_FINGER;
+volatile SignalQuality currentSignalQuality = QUALITY_POOR;
+
+// Пороги гистерезиса для 18-битного MAX30102 (разрешение 0..262143)
+#define FINGER_TOUCH_THRESHOLD       45000     // IR выше этого = обнаружено касание
+#define FINGER_RELEASE_THRESHOLD     30000     // IR ниже этого = контакт разорван
+#define FINGER_SATURATION_THRESHOLD  260000    // IR выше этого = насыщение фотодиода
+#define RED_MIN_THRESHOLD            20000     // RED минимальный уровень при контакте
+
+uint8_t fingerContactDebounce = 0;   // счётчик подтверждений касания
+uint8_t fingerReleaseDebounce = 0;   // счётчик подтверждений отрыва
+
+const char* getMeasurementStateStr(MeasurementState s) {
+  switch (s) {
+    case STATE_NO_FINGER: return "NO_FINGER";
+    case STATE_DETECTING: return "DETECTING";
+    case STATE_SIGNAL_UNSTABLE: return "SIGNAL_UNSTABLE";
+    case STATE_MEASURING: return "MEASURING";
+    case STATE_VALID: return "VALID";
+    case STATE_SENSOR_ERROR: return "SENSOR_ERROR";
+    default: return "NO_FINGER";
+  }
+}
+
+const char* getSignalQualityStr(SignalQuality q) {
+  switch (q) {
+    case QUALITY_GOOD: return "GOOD";
+    case QUALITY_MODERATE: return "MODERATE";
+    case QUALITY_POOR: return "POOR";
+    default: return "POOR";
+  }
+}
+
 // --- ПУЛЬС ---
 uint8_t currentBPM = 0;
 long lastBeat = 0;
@@ -92,7 +141,16 @@ const byte RATE_SIZE = 4;
 byte rates[RATE_SIZE] = {0, 0, 0, 0};
 byte rateSpot = 0;
 long lastIR = 0;
+long lastRED = 0;
 const unsigned long BPM_TIMEOUT_MS = 8000;
+
+// --- ДИАГНОСТИКА ПУЛЬСА (BPM) ---
+unsigned long totalBeatsDetected = 0;
+unsigned long lastBeatDeltaMs = 0;
+float lastRawBPM = 0.0f;
+const char* lastRejectReason = "НЕТ_УДАРОВ";
+unsigned long maximHRValidCount = 0;
+int32_t lastMaximHR = 0;
 
 // --- SpO2 ---
 uint8_t currentSpO2 = 0;
@@ -165,7 +223,82 @@ void ecgTask(void* param) {
 }
 
 // =====================================================================
-// SpO2: сброс и расчёт
+// ДЕТЕКТОР УДАРОВ ПУЛЬСА (PPG 32-BIT ДЛЯ 25 ГЦ)
+// Заменяет 16-битный checkForBeat из библиотеки, который переполняется при IR > 65535
+// =====================================================================
+bool checkPPGBeat(int32_t ir, unsigned long now, bool reset) {
+  static int32_t ir_dc_reg = 0;
+  static int32_t ac_prev = 0;
+  static int32_t ac_cur = 0;
+  static int32_t ac_max = 0;
+  static int32_t ac_min = 0;
+  static bool positive_edge = false;
+  static bool negative_edge = false;
+  static unsigned long last_detected_beat = 0;
+
+  if (reset) {
+    ir_dc_reg = 0;
+    ac_prev = 0;
+    ac_cur = 0;
+    ac_max = 0;
+    ac_min = 0;
+    positive_edge = false;
+    negative_edge = false;
+    last_detected_beat = 0;
+    return false;
+  }
+
+  if (ir_dc_reg == 0) {
+    ir_dc_reg = ir;
+  } else {
+    // Бегущее среднее DC (tau ~ 1.3 с при 25 Гц, альфа 1/32)
+    ir_dc_reg += (ir - ir_dc_reg) >> 5;
+  }
+
+  int32_t ac_raw = ir - ir_dc_reg;
+
+  // НЧ-сглаживание шума на 25 Гц
+  ac_prev = ac_cur;
+  ac_cur = (ac_prev + ac_raw) >> 1;
+
+  bool beat = false;
+
+  // Восходящий фронт (переход через ноль)
+  if (ac_prev < 0 && ac_cur >= 0) {
+    int32_t peak_to_peak = ac_max - ac_min;
+    positive_edge = true;
+    negative_edge = false;
+    ac_max = 0;
+
+    // Размах пульса для 18-битного ADC: от 50 до 25000 отсчетов
+    if (peak_to_peak > 50 && peak_to_peak < 25000) {
+      // Рефрактерный период не менее 300 мс (не более 200 уд/мин)
+      if (last_detected_beat == 0 || (now - last_detected_beat >= 300)) {
+        beat = true;
+        last_detected_beat = now;
+      }
+    }
+  }
+
+  // Нисходящий фронт
+  if (ac_prev > 0 && ac_cur <= 0) {
+    positive_edge = false;
+    negative_edge = true;
+    ac_min = 0;
+  }
+
+  if (positive_edge && ac_cur > ac_max) {
+    ac_max = ac_cur;
+  }
+  if (negative_edge && ac_cur < ac_min) {
+    ac_min = ac_cur;
+  }
+
+  return beat;
+}
+
+// =====================================================================
+// SpO2 + ЧСС: сброс и расчёт
 // =====================================================================
 void resetPulseOx() {
   currentBPM = 0;
@@ -179,12 +312,21 @@ void resetPulseOx() {
   spo2HistCount = 0;
   spo2HistPos = 0;
   lastSpo2ValidTime = 0;
+
+  totalBeatsDetected = 0;
+  lastBeatDeltaMs = 0;
+  lastRawBPM = 0.0f;
+  lastRejectReason = "НЕТ_ПАЛЬЦА";
+  lastMaximHR = 0;
+
+  checkPPGBeat(0, 0, true);
 }
 
 void computeSpO2(unsigned long now) {
   maxim_heart_rate_and_oxygen_saturation(irBuf, SPO2_BUF, redBuf,
                                          &spo2Raw, &spo2Valid, &hrRaw, &hrValid);
 
+  // 1. SpO2
   if (spo2Valid && spo2Raw >= SPO2_MIN_VALID && spo2Raw <= SPO2_MAX_VALID) {
     spo2Hist[spo2HistPos] = (uint8_t)spo2Raw;
     spo2HistPos = (spo2HistPos + 1) % SPO2_AVG_N;
@@ -195,45 +337,126 @@ void computeSpO2(unsigned long now) {
     currentSpO2 = (uint8_t)(sum / spo2HistCount);
     lastSpo2ValidTime = now;
   } else if (lastSpo2ValidTime > 0 && (now - lastSpo2ValidTime) > SPO2_HOLD_MS) {
-    // Давно нет валидных расчётов — не показываем устаревшее значение
     currentSpO2 = 0;
     spo2HistCount = 0;
     spo2HistPos = 0;
+  }
+
+  // 2. ЧСС по алгоритму Maxim (буфер 100 отсчётов / 4 секунды)
+  if (hrValid && hrRaw >= 40 && hrRaw <= 200) {
+    maximHRValidCount++;
+    lastMaximHR = hrRaw;
+    if (currentBPM == 0) {
+      currentBPM = (uint8_t)hrRaw;
+      for (byte x = 0; x < RATE_SIZE; x++) rates[x] = (byte)hrRaw;
+      lastBeat = now;
+      lastRejectReason = "СИНХР_MAXIM";
+    }
+  }
+}
+
+void updateContactState(uint32_t ir, uint32_t red) {
+  // 1. Проверка обрыва контакта или насыщения фотодиода с гистерезисом
+  if (ir < FINGER_RELEASE_THRESHOLD || ir >= FINGER_SATURATION_THRESHOLD || red < (FINGER_RELEASE_THRESHOLD / 2)) {
+    fingerContactDebounce = 0;
+    if (fingerReleaseDebounce < 255) fingerReleaseDebounce++;
+
+    if (fingerReleaseDebounce >= 3) { // 3 последовательных отсчёта (~120 мс) подтверждают отсутствие
+      if (currentMeasurementState != STATE_NO_FINGER) {
+        currentMeasurementState = STATE_NO_FINGER;
+        currentSignalQuality = QUALITY_POOR;
+        resetPulseOx();
+      }
+    }
+    return;
+  }
+
+  // 2. Сигнал находится в рабочем диапазоне [45000 ... 260000]
+  fingerReleaseDebounce = 0;
+
+  if (currentMeasurementState == STATE_NO_FINGER) {
+    if (fingerContactDebounce < 255) fingerContactDebounce++;
+    if (fingerContactDebounce >= 5) { // 5 отсчётов (~200 мс) подтверждают контакт
+      currentMeasurementState = STATE_DETECTING;
+      currentSignalQuality = QUALITY_MODERATE;
+    }
+    return;
+  }
+
+  // 3. Если контакт уже зафиксирован — определяем стабильность и достоверность
+  if (currentMeasurementState == STATE_DETECTING) {
+    if (fingerContactDebounce < 15) {
+      fingerContactDebounce++;
+    } else {
+      currentMeasurementState = STATE_MEASURING;
+    }
+  }
+
+  if (currentMeasurementState == STATE_MEASURING || currentMeasurementState == STATE_VALID || currentMeasurementState == STATE_SIGNAL_UNSTABLE) {
+    // Проверка стабильности: если пульс достоверен и зафиксирован
+    if (currentBPM >= 40 && currentBPM <= 200 && totalBeatsDetected >= 2) {
+      currentMeasurementState = STATE_VALID;
+      currentSignalQuality = (totalBeatsDetected >= 5 && currentSpO2 >= 90) ? QUALITY_GOOD : QUALITY_MODERATE;
+    } else if (totalBeatsDetected > 0) {
+      currentMeasurementState = STATE_MEASURING;
+      currentSignalQuality = QUALITY_MODERATE;
+    }
   }
 }
 
 void processPulseOxSample(uint32_t ir, uint32_t red, unsigned long now) {
   lastIR = ir;
+  lastRED = red;
 
-  if (ir < FINGER_IR_THRESHOLD) {
-    // Палец убран
-    if (fingerWasOn) {
-      resetPulseOx();
-      fingerWasOn = false;
-    }
+  updateContactState(ir, red);
+
+  if (currentMeasurementState == STATE_NO_FINGER) {
     return;
   }
-  fingerWasOn = true;
 
-  // --- ЧСС по детектору ударов (быстрый отклик) ---
-  if (checkForBeat((long)ir)) {
-    long delta = now - lastBeat;
-    lastBeat = now;
+  // --- ЧСС по мгновенному 32-битному детектору ударов (25 Гц) ---
+  if (checkPPGBeat((int32_t)ir, now, false)) {
+    totalBeatsDetected++;
 
-    if (delta > 0) {
-      beatsPerMinute = 60.0 / (delta / 1000.0);
+    if (lastBeat == 0) {
+      // Первый обнаруженный удар — фиксируем точку отсчёта
+      lastBeat = now;
+      lastRejectReason = "ПЕРВЫЙ_УДАР (фиксация t0)";
+    } else {
+      long delta = now - lastBeat;
+      lastBeatDeltaMs = delta;
 
-      if (beatsPerMinute >= 40 && beatsPerMinute <= 200) {
-        if (rates[0] == 0) {
-          for (byte x = 0; x < RATE_SIZE; x++) rates[x] = (byte)beatsPerMinute;
+      if (delta >= 300 && delta <= 1500) {
+        beatsPerMinute = 60000.0f / (float)delta;
+        lastRawBPM = beatsPerMinute;
+
+        if (beatsPerMinute >= 40 && beatsPerMinute <= 200) {
+          if (rates[0] == 0) {
+            for (byte x = 0; x < RATE_SIZE; x++) rates[x] = (byte)beatsPerMinute;
+          } else {
+            rates[rateSpot++] = (byte)beatsPerMinute;
+            rateSpot %= RATE_SIZE;
+          }
+          beatAvg = 0;
+          for (byte x = 0; x < RATE_SIZE; x++) beatAvg += rates[x];
+          beatAvg /= RATE_SIZE;
+          currentBPM = (uint8_t)beatAvg;
+          lastRejectReason = "OK";
+          if (currentMeasurementState != STATE_VALID && totalBeatsDetected >= 2) {
+            currentMeasurementState = STATE_VALID;
+          }
         } else {
-          rates[rateSpot++] = (byte)beatsPerMinute;
-          rateSpot %= RATE_SIZE;
+          lastRejectReason = "BPM_ВНЕ_ДИАПАЗОНА";
+          if (currentMeasurementState == STATE_VALID) {
+            currentMeasurementState = STATE_SIGNAL_UNSTABLE;
+          }
         }
-        beatAvg = 0;
-        for (byte x = 0; x < RATE_SIZE; x++) beatAvg += rates[x];
-        beatAvg /= RATE_SIZE;
-        currentBPM = (uint8_t)beatAvg;
+        lastBeat = now;
+      } else if (delta < 300) {
+        lastRejectReason = "ДВОЙНОЙ_ИМПУЛЬС (delta < 300мс)";
+      } else {
+        lastRejectReason = "ПАУЗА_МЕЖДУ_УДАРАМИ (delta > 1500мс)";
+        lastBeat = now;
       }
     }
   }
@@ -260,13 +483,35 @@ void processPulseOxSample(uint32_t ir, uint32_t red, unsigned long now) {
 }
 
 // =====================================================================
-// ОТПРАВКА ПАКЕТА (с нарезкой по MTU, если MTU не согласован)
+// ОТПРАВКА ПАКЕТА (Единый расширенный JSON + обратная совместимость)
 // =====================================================================
 void sendPacket(const uint16_t* samples, uint8_t count, bool lo) {
-  char payload[160];
+  char payload[384];
+
+  const char* stateStr = getMeasurementStateStr(currentMeasurementState);
+  const char* qualityStr = getSignalQualityStr(currentSignalQuality);
+  bool fingerDetected = (currentMeasurementState != STATE_NO_FINGER && currentMeasurementState != STATE_SENSOR_ERROR);
+  bool hrValid = fingerDetected && (currentMeasurementState == STATE_VALID || currentMeasurementState == STATE_MEASURING) && (currentBPM >= 40 && currentBPM <= 200);
+  bool spValid = fingerDetected && (currentMeasurementState == STATE_VALID || currentMeasurementState == STATE_MEASURING) && (currentSpO2 >= 80 && currentSpO2 <= 100);
+
+  uint8_t outBpm = hrValid ? currentBPM : 0;
+  uint8_t outSpo2 = spValid ? currentSpO2 : 0;
+
   int n = snprintf(payload, sizeof(payload),
-                   "{\"bpm\":%u,\"spo2\":%u,\"lo\":%d,\"ecg\":[",
-                   currentBPM, currentSpO2, lo ? 1 : 0);
+                   "{\"finger_detected\":%s,\"measurement_state\":\"%s\","
+                   "\"heart_rate\":%u,\"heart_rate_valid\":%s,"
+                   "\"spo2\":%u,\"spo2_valid\":%s,\"signal_quality\":\"%s\","
+                   "\"bpm\":%u,\"lo\":%d,\"timestamp\":%lu,\"ecg\":[",
+                   fingerDetected ? "true" : "false",
+                   stateStr,
+                   outBpm,
+                   hrValid ? "true" : "false",
+                   outSpo2,
+                   spValid ? "true" : "false",
+                   qualityStr,
+                   outBpm,
+                   lo ? 1 : 0,
+                   millis());
 
   for (uint8_t i = 0; i < count; i++) {
     n += snprintf(payload + n, sizeof(payload) - n, i ? ",%u" : "%u", samples[i]);
@@ -420,16 +665,16 @@ void loop() {
   // ====================================================================
   if (now - lastDiagPrintTime >= DIAG_INTERVAL_MS) {
     lastDiagPrintTime = now;
-    const char* pulseState = !max30102Present ? "ДАТЧИК_ОТКЛ" :
-                             (lastIR >= FINGER_IR_THRESHOLD ? "ПАЛЕЦ_ОК" : "НЕТ_ПАЛЬЦА");
-    Serial.printf("[DIAG] BLE:%s MTU:%u пак:%lu err:%lu ovf:%lu | IR=%ld [%s] ЧСС=%u SpO2=%u%% (буфер %d/%d) | ECG=%u LO=%d\n",
+    const char* stateStr = getMeasurementStateStr(currentMeasurementState);
+    const char* qualityStr = getSignalQualityStr(currentSignalQuality);
+    Serial.printf("[DIAG] BLE:%s MTU:%u пак:%lu | IR=%ld RED=%ld [%s/%s] | ЧСС=%u [ударов:%lu dt=%lums raw=%.1f MaximHR=%ld (%s)] | SpO2=%u%% (буф %d/%d) | ECG=%u LO=%d\n",
                   deviceConnected ? "ON" : "OFF",
                   negotiatedMtu,
                   packetsSentCount,
-                  packetsFailedCount,
-                  ecgOverflowCount,
-                  lastIR, pulseState,
-                  currentBPM, currentSpO2,
+                  lastIR, lastRED, stateStr, qualityStr,
+                  currentBPM, totalBeatsDetected, lastBeatDeltaMs, lastRawBPM,
+                  lastMaximHR, lastRejectReason,
+                  currentSpO2,
                   bufFill, SPO2_BUF,
                   lastEcgSample,
                   currentLeadsOff ? 1 : 0);

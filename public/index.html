@@ -229,7 +229,7 @@
   <!-- ======================================================== -->
   <section id="screen-onboarding-connect" class="hidden flex-1 flex flex-col items-center justify-center p-4 sm:p-6 max-w-xl mx-auto w-full my-auto">
     
-    <div class="text-center space-y-2 mb-6">
+    <div onclick="App.handleLogoClick(event)" class="text-center space-y-2 mb-6 cursor-pointer select-none" title="Qamqor">
       <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-teal-700 text-white mb-2 shadow-md shadow-teal-700/20">
         <svg class="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
@@ -540,7 +540,7 @@
       
       <!-- Top Brand -->
       <div class="space-y-6">
-        <div class="flex items-center space-x-3 px-2">
+        <div onclick="App.handleLogoClick(event)" class="flex items-center space-x-3 px-2 cursor-pointer select-none" title="Qamqor">
           <div class="w-9 h-9 rounded-xl bg-teal-700 text-white flex items-center justify-center shadow-sm">
             <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
               <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
@@ -630,7 +630,7 @@
     <!-- ==================================================== -->
     <header class="lg:hidden sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200 px-4 py-2.5">
       <div class="max-w-5xl mx-auto flex items-center justify-between">
-        <div class="flex items-center space-x-2.5">
+        <div onclick="App.handleLogoClick(event)" class="flex items-center space-x-2.5 cursor-pointer select-none" title="Qamqor">
           <div class="w-7 h-7 rounded-xl bg-teal-700 text-white flex items-center justify-center shadow-xs">
             <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
               <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/>
@@ -794,7 +794,9 @@
 
           <div class="flex items-center justify-between flex-wrap gap-x-2 gap-y-1 text-[10px] font-mono text-slate-400 pt-1 border-t border-slate-100">
             <span>Калибровка: 25 мм/с</span>
+            <span class="text-slate-300">•</span>
             <span>Масштаб: 10 мм/мВ</span>
+            <span class="text-slate-300">•</span>
             <span>Фильтр: 0.05–40 Гц</span>
           </div>
         </div>
@@ -1331,6 +1333,286 @@
   </div>
 
   <!-- ======================================================== -->
+  <!-- SCREEN: ADMIN CONTROL PANEL (#admin) -->
+  <!-- ======================================================== -->
+  <section id="screen-admin" class="hidden flex-1 flex flex-col w-full min-h-screen bg-slate-950 text-slate-100 p-4 sm:p-6 lg:p-8">
+    <div class="max-w-5xl mx-auto w-full space-y-6">
+      
+      <!-- Admin Header -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-slate-900 border border-slate-800">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-teal-500/10 text-teal-400 border border-teal-500/20 flex items-center justify-center font-bold font-mono">
+            QC
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h1 class="text-base font-extrabold tracking-tight text-white">QAMQOR ADMIN</h1>
+              <span class="text-[9px] font-mono px-2 py-0.5 rounded-full bg-teal-900/60 text-teal-300 border border-teal-700/50">Clinical Engineer</span>
+            </div>
+            <div class="text-[11px] text-slate-400 font-mono">Консоль отладки биометрических датчиков и единой математической модели</div>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+          <button onclick="App.openAdminDashboard()" class="px-3 py-1.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs shadow-sm transition flex items-center space-x-1.5">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <span>Реальный монитор</span>
+          </button>
+          <button onclick="App.showScreen('main-app')" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 transition">
+            В приложение
+          </button>
+          <button onclick="App.adminLogout()" class="px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900 text-rose-300 font-semibold text-xs border border-rose-800/50 transition">
+            Выйти
+          </button>
+        </div>
+      </div>
+
+      <!-- Grid of Admin Modules -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- Module 1: BLE & Hardware Sensors -->
+        <div class="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div class="flex items-center space-x-2">
+              <span id="admin-ble-dot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+              <h2 class="text-sm font-bold text-white">Телеметрия BLE (Qamqor_Band)</h2>
+            </div>
+            <span id="admin-ble-status-pill" class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">Отключено</span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+            <div class="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80">
+              <div class="text-[10px] text-slate-400">Контакт пальца</div>
+              <div id="admin-status-finger" class="font-bold text-slate-200 mt-0.5">NO_FINGER</div>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80">
+              <div class="text-[10px] text-slate-400">Качество сигнала</div>
+              <div id="admin-status-quality" class="font-bold text-slate-200 mt-0.5">POOR</div>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80">
+              <div class="text-[10px] text-slate-400">ЧСС (BPM) / Валидность</div>
+              <div id="admin-status-hr" class="font-bold text-slate-200 mt-0.5">— (false)</div>
+            </div>
+            <div class="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80">
+              <div class="text-[10px] text-slate-400">SpO2 / Валидность</div>
+              <div id="admin-status-spo2" class="font-bold text-slate-200 mt-0.5">— (false)</div>
+            </div>
+          </div>
+
+          <div class="flex items-center space-x-2">
+            <button onclick="safeBLEConnect(false)" class="flex-1 py-2 px-3 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs transition">
+              Подключить браслет по BLE
+            </button>
+            <button onclick="safeBLEDisconnect()" class="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs border border-slate-700 transition">
+              Отключить
+            </button>
+          </div>
+
+          <!-- Raw Packet Inspector -->
+          <div class="space-y-1.5 pt-2">
+            <div class="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+              <span>Инспектор BLE-пакетов (JSON):</span>
+              <span id="admin-pkt-counter">Пакет #0</span>
+            </div>
+            <pre id="admin-raw-packet" class="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[10px] font-mono text-emerald-400 overflow-x-auto max-h-36">// Ожидание поступления телеметрии от Qamqor_Band...</pre>
+          </div>
+        </div>
+
+        <!-- Module 2: Unified Clinical Mathematical Model -->
+        <div class="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div class="flex items-center space-x-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-sky-400"></span>
+              <h2 class="text-sm font-bold text-white">Единая математическая модель</h2>
+            </div>
+            <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-950 text-sky-400 border border-sky-800">Unified Model v1.0</span>
+          </div>
+
+          <div class="space-y-2 text-xs">
+            <p class="text-slate-400 leading-relaxed">
+              Оценка риска базируется на едином математическом ядре модели (L_stat + L_dyn) без расхождений между пользовательским режимом и режимом администратора.
+            </p>
+
+            <div class="grid grid-cols-3 gap-2 font-mono text-center pt-2">
+              <div class="p-2 rounded-xl bg-slate-950 border border-slate-800">
+                <div class="text-[9px] text-slate-500">L_stat (Опросник)</div>
+                <div id="admin-model-lstat" class="font-bold text-slate-200 mt-0.5">—</div>
+              </div>
+              <div class="p-2 rounded-xl bg-slate-950 border border-slate-800">
+                <div class="text-[9px] text-slate-500">L_dyn (Биометрия)</div>
+                <div id="admin-model-ldyn" class="font-bold text-slate-200 mt-0.5">—</div>
+              </div>
+              <div class="p-2 rounded-xl bg-slate-950 border border-slate-800">
+                <div class="text-[9px] text-slate-500">Индекс риска (Q)</div>
+                <div id="admin-model-qscore" class="font-bold text-emerald-400 mt-0.5">—</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="pt-3 border-t border-slate-800 flex items-center justify-between">
+            <button onclick="App.recalculateModel(); App.renderAdminPanel();" class="py-2 px-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs transition">
+              Пересчитать модель
+            </button>
+            <button onclick="App.startSurveyWizard()" class="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs border border-slate-700 transition">
+              Открыть опросник
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- SCREEN: REAL ADMIN DASHBOARD (#admin/dashboard) -->
+  <!-- ======================================================== -->
+  <section id="screen-admin-dashboard" class="hidden flex-1 flex flex-col w-full min-h-screen bg-[#070d17] text-slate-100 p-4 sm:p-6 lg:p-8">
+    <div class="max-w-5xl mx-auto w-full space-y-6">
+
+      <!-- Dashboard Header -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-slate-900/90 border border-slate-800 backdrop-blur">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-teal-500/20 text-teal-400 border border-teal-500/30 flex items-center justify-center font-bold">
+            ⚡
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <h1 class="text-base font-extrabold tracking-tight text-white">Реальный биометрический монитор</h1>
+              <span class="text-[9px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800">Admin Dashboard</span>
+            </div>
+            <div class="text-[11px] text-slate-400 font-mono">Прямой поток физиологических датчиков Qamqor_Band</div>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+          <button onclick="App.showScreen('admin')" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 transition">
+            ← В консоль
+          </button>
+          <button onclick="App.adminLogout()" class="px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900 text-rose-300 font-semibold text-xs border border-rose-800/50 transition">
+            Выйти
+          </button>
+        </div>
+      </div>
+
+      <!-- 4 Primary Clinical Cards -->
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        
+        <!-- Metric 1: Live Pulse -->
+        <div class="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-mono uppercase text-slate-400">Текущий пульс</span>
+            <span id="admin-dash-bpm-dot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+          </div>
+          <div class="flex items-baseline space-x-2">
+            <span id="admin-dash-bpm" class="text-4xl font-extrabold font-mono text-white">—</span>
+            <span class="text-xs text-slate-400 font-mono">уд/мин</span>
+          </div>
+          <div id="admin-dash-bpm-status" class="text-[10px] text-slate-400 font-mono">NO FINGER</div>
+        </div>
+
+        <!-- Metric 2: Live SpO2 -->
+        <div class="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-mono uppercase text-slate-400">Кислород SpO₂</span>
+            <span id="admin-dash-spo2-dot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+          </div>
+          <div class="flex items-baseline space-x-2">
+            <span id="admin-dash-spo2" class="text-4xl font-extrabold font-mono text-white">—</span>
+            <span class="text-xs text-slate-400 font-mono">%</span>
+          </div>
+          <div id="admin-dash-spo2-status" class="text-[10px] text-slate-400 font-mono">NO FINGER</div>
+        </div>
+
+        <!-- Metric 3: Contact & Quality -->
+        <div class="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-mono uppercase text-slate-400">Контакт / Качество</span>
+            <span id="admin-dash-contact-dot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+          </div>
+          <div id="admin-dash-contact" class="text-lg font-bold font-mono text-white mt-1">NO FINGER</div>
+          <div id="admin-dash-quality" class="text-[10px] text-slate-400 font-mono">Качество: POOR</div>
+        </div>
+
+        <!-- Metric 4: Last Valid Timestamp & BLE -->
+        <div class="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-mono uppercase text-slate-400">Связь / Замер</span>
+            <span id="admin-dash-ble-dot" class="w-2.5 h-2.5 rounded-full bg-slate-600"></span>
+          </div>
+          <div id="admin-dash-last-time" class="text-lg font-bold font-mono text-white mt-1">--:--:--</div>
+          <div id="admin-dash-ble-state" class="text-[10px] text-slate-400 font-mono">BLE: Отключено</div>
+        </div>
+
+      </div>
+
+      <!-- ECG Section: Explicit DEMO Requirement -->
+      <div class="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-3">
+        
+        <!-- DEMO BANNER AS EXPLICITLY REQUIRED -->
+        <div class="flex items-center justify-between p-3 rounded-xl bg-amber-950/60 border border-amber-500/40 text-amber-200">
+          <div class="flex items-center space-x-2.5">
+            <span class="text-base">⚠️</span>
+            <div>
+              <div class="text-xs font-bold tracking-wide uppercase font-mono">DEMO ECG — NOT REAL SENSOR DATA</div>
+              <div class="text-[10px] text-amber-300/80">Осциллограмма генерируется физиологическим алгоритмом P-Q-R-S-T и не используется для расчета клинических рисков</div>
+            </div>
+          </div>
+          <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-900/80 text-amber-300 border border-amber-600/50">250 Гц DEMO</span>
+        </div>
+
+        <div class="relative w-full h-48 sm:h-56 rounded-xl overflow-hidden bg-[#060b13] border border-slate-800">
+          <canvas id="adminECGCanvas" class="w-full h-full block"></canvas>
+        </div>
+
+        <div class="flex items-center justify-between text-[10px] font-mono text-slate-500">
+          <span>Синхронизация с пульсом: <b id="admin-ecg-bpm-label" class="text-slate-300">72 уд/мин</b></span>
+          <span>Развёртка: 25 мм/с • Масштаб: 10 мм/мВ</span>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ======================================================== -->
+  <!-- MODAL: ADMIN AUTHENTICATION (PASSWORD: 2020) -->
+  <!-- ======================================================== -->
+  <div id="modal-admin-auth" role="dialog" aria-modal="true" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+    <div class="health-card max-w-sm w-full p-6 space-y-4 bg-white border border-slate-200 shadow-2xl rounded-2xl">
+      <div class="flex items-center space-x-3 border-b border-slate-100 pb-3">
+        <div class="w-10 h-10 rounded-xl bg-teal-700 text-white flex items-center justify-center shadow-sm">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </div>
+        <div>
+          <h3 class="text-sm font-bold text-slate-900">Вход для инженера</h3>
+          <p class="text-[11px] text-slate-500 font-mono">QAMQOR Clinical Console</p>
+        </div>
+      </div>
+
+      <form id="admin-auth-form" onsubmit="event.preventDefault(); App.submitAdminAuth();" class="space-y-3">
+        <div>
+          <label for="admin-auth-pass" class="block text-xs font-semibold text-slate-700 mb-1">Пароль доступа</label>
+          <input type="password" id="admin-auth-pass" autocomplete="current-password" placeholder="••••" required
+            class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-transparent">
+        </div>
+
+        <div id="admin-auth-error" class="hidden text-[11px] text-rose-600 font-medium p-2 rounded-lg bg-rose-50 border border-rose-200"></div>
+
+        <div class="flex items-center space-x-2 pt-2">
+          <button type="button" onclick="App.closeAdminAuthModal()" class="flex-1 py-2 px-3 text-xs font-semibold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl transition">
+            Отмена
+          </button>
+          <button type="submit" id="admin-auth-submit-btn" class="flex-1 py-2 px-3 text-xs font-bold text-white bg-teal-700 hover:bg-teal-800 rounded-xl shadow-xs transition flex items-center justify-center">
+            <span>Войти</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
   <!-- MODAL: SOS EMERGENCY ACTION & DIALOG -->
   <!-- ======================================================== -->
   <div id="modal-sos-dialog" role="dialog" aria-modal="true" aria-labelledby="sos-dialog-title" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
@@ -1507,6 +1789,42 @@ const DeviceState = {
  */
 
 
+
+/**
+ * Валидация измерения ЧСС (уд/мин)
+ * @param {number} bpm
+ * @returns {Object} { isValid, bpm, reason }
+ */
+function validateHeartRate(bpm) {
+  if (typeof bpm !== 'number' || isNaN(bpm)) {
+    return { isValid: false, reason: 'ЧСС должен быть числом' };
+  }
+  if (bpm <= 0) {
+    return { isValid: false, reason: 'Нет контакта с датчиком' };
+  }
+  if (bpm < MODEL_CONFIG.signals.hr_min || bpm > MODEL_CONFIG.signals.hr_max) {
+    return { isValid: false, bpm, reason: `Пульс вне физиологического диапазона [30, 220]: ${bpm}` };
+  }
+  return { isValid: true, bpm: Math.round(bpm) };
+}
+
+/**
+ * Валидация измерения SpO2 (%)
+ * @param {number} spo2
+ * @returns {Object} { isValid, spo2, reason }
+ */
+function validateSpO2(spo2) {
+  if (typeof spo2 !== 'number' || isNaN(spo2)) {
+    return { isValid: false, reason: 'SpO2 должен быть числом' };
+  }
+  if (spo2 <= 0) {
+    return { isValid: false, reason: 'Сатурация ещё не рассчитана или нет контакта' };
+  }
+  if (spo2 < MODEL_CONFIG.signals.spo2_min || spo2 > MODEL_CONFIG.signals.spo2_max) {
+    return { isValid: false, spo2, reason: `SpO2 вне диапазона [70, 100]: ${spo2}%` };
+  }
+  return { isValid: true, spo2: Math.round(spo2) };
+}
 
 /**
  * Валидация измерения пульсоксиметра MAX30102
@@ -4843,14 +5161,25 @@ class BLEService {
     let pulseValidation = { isValid: false, bpm: null, spo2: null };
     let currentPulseStatus = 'waiting';
 
-    const rawStatus = String(json.status || json.pulseStatus || '').toLowerCase();
-    const rawBpm = json.heartRate != null ? Number(json.heartRate) : (json.bpm != null ? Number(json.bpm) : (json.hr != null ? Number(json.hr) : null));
+    const rawState = String(json.measurement_state || json.status || json.pulseStatus || '').toUpperCase();
+    const explicitFinger = json.finger_detected != null ? Boolean(json.finger_detected) : null;
+    const signalQuality = String(json.signal_quality || 'MODERATE').toUpperCase();
+
+    const rawBpm = json.heart_rate != null ? Number(json.heart_rate) :
+                  (json.bpm != null ? Number(json.bpm) :
+                  (json.heartRate != null ? Number(json.heartRate) :
+                  (json.hr != null ? Number(json.hr) : null)));
+
     const rawSpo2 = json.spo2 != null ? Number(json.spo2) : (json.o2 != null ? Number(json.o2) : null);
 
+    const isHrValidExplicit = json.heart_rate_valid != null ? Boolean(json.heart_rate_valid) : null;
+    const isSpo2ValidExplicit = json.spo2_valid != null ? Boolean(json.spo2_valid) : null;
+
     const isExplicitNoFinger = (
-      rawStatus === 'no_finger' ||
-      (Number.isFinite(rawBpm) && rawBpm <= 0) ||
-      (Number.isFinite(rawSpo2) && rawSpo2 <= 0)
+      explicitFinger === false ||
+      rawState === 'NO_FINGER' ||
+      rawState === 'NO_CONTACT' ||
+      (explicitFinger === null && Number.isFinite(rawBpm) && rawBpm <= 0 && Number.isFinite(rawSpo2) && rawSpo2 <= 0)
     );
 
     if (isExplicitNoFinger) {
@@ -4862,38 +5191,59 @@ class BLEService {
       validatedBpm = null;
       validatedSpo2 = null;
       pulseValidation = { isValid: false, bpm: null, spo2: null, reason: 'Нет контакта с пальцем (MAX30102)' };
-    } else if (rawStatus === 'calculating') {
+    } else if (rawState === 'DETECTING' || rawState === 'CALCULATING') {
       currentPulseStatus = 'calculating';
-    } else if (rawStatus === 'sensor_error') {
+      this.lastValidPulse = null;
+      validatedBpm = null;
+      validatedSpo2 = null;
+    } else if (rawState === 'SENSOR_ERROR') {
       currentPulseStatus = 'sensor_error';
       this.lastValidPulse = null;
       this.lastPulseTime = null;
-    } else if (rawStatus === 'initializing') {
-      currentPulseStatus = 'initializing';
-    } else if (Number.isFinite(rawBpm) && rawBpm > 0 && Number.isFinite(rawSpo2) && rawSpo2 > 0) {
-      const valRes = validatePulseOximetry(rawBpm, rawSpo2);
-      pulseValidation = valRes;
-      if (valRes && valRes.isValid) {
-        currentPulseStatus = 'ok';
-        hasActivePulse = true;
-        validatedBpm = valRes.bpm;
-        validatedSpo2 = valRes.spo2;
-        this.lastPulseTime = now;
-        this.lastValidPulse = { bpm: validatedBpm, spo2: validatedSpo2, timestamp: now };
-      } else {
-        currentPulseStatus = 'invalid';
-      }
+    } else if (rawState === 'SIGNAL_UNSTABLE') {
+      currentPulseStatus = 'unstable';
     } else {
-      // В этом конкретном пакете данных MAX30102 нет (например, выделенный ЭКГ-пакет)
-      if (this.lastPulseTime && (now - this.lastPulseTime < 3500) && this.lastValidPulse) {
-        // Предыдущий замер пульса еще свежий (менее 3.5 сек)
-        currentPulseStatus = 'ok';
+      // Независимая валидация ЧСС и SpO2
+      if (isHrValidExplicit === true && Number.isFinite(rawBpm) && rawBpm >= 40 && rawBpm <= 200) {
+        validatedBpm = Math.round(rawBpm);
+      } else if (isHrValidExplicit !== false && Number.isFinite(rawBpm) && rawBpm >= 40 && rawBpm <= 200) {
+        const hrRes = validateHeartRate(rawBpm);
+        if (hrRes.isValid) validatedBpm = hrRes.bpm;
+      }
+
+      if (isSpo2ValidExplicit === true && Number.isFinite(rawSpo2) && rawSpo2 >= 80 && rawSpo2 <= 100) {
+        validatedSpo2 = Math.round(rawSpo2);
+      } else if (isSpo2ValidExplicit !== false && Number.isFinite(rawSpo2) && rawSpo2 >= 70 && rawSpo2 <= 100) {
+        const spRes = validateSpO2(rawSpo2);
+        if (spRes.isValid) validatedSpo2 = spRes.spo2;
+      }
+
+      if (validatedBpm != null || validatedSpo2 != null) {
+        currentPulseStatus = (validatedBpm != null && validatedSpo2 != null) ? 'ok' : 'measuring';
         hasActivePulse = true;
-        validatedBpm = this.lastValidPulse.bpm;
-        validatedSpo2 = this.lastValidPulse.spo2;
-        pulseValidation = { isValid: true, bpm: validatedBpm, spo2: validatedSpo2 };
+        this.lastPulseTime = now;
+        this.lastValidPulse = {
+          bpm: validatedBpm != null ? validatedBpm : (this.lastValidPulse?.bpm || null),
+          spo2: validatedSpo2 != null ? validatedSpo2 : (this.lastValidPulse?.spo2 || null),
+          timestamp: now
+        };
+        pulseValidation = {
+          isValid: true,
+          bpm: validatedBpm,
+          spo2: validatedSpo2
+        };
+      } else if (rawState === 'MEASURING') {
+        currentPulseStatus = 'measuring';
       } else {
-        currentPulseStatus = this.pulseSensorStatus === 'disconnected' ? 'disconnected' : 'waiting';
+        if (this.lastPulseTime && (now - this.lastPulseTime < 3500) && this.lastValidPulse) {
+          currentPulseStatus = 'ok';
+          hasActivePulse = true;
+          validatedBpm = this.lastValidPulse.bpm;
+          validatedSpo2 = this.lastValidPulse.spo2;
+          pulseValidation = { isValid: true, bpm: validatedBpm, spo2: validatedSpo2 };
+        } else {
+          currentPulseStatus = this.pulseSensorStatus === 'disconnected' ? 'disconnected' : 'waiting';
+        }
       }
     }
 
@@ -5002,6 +5352,11 @@ class BLEService {
       pulseValidation,
       hasActivePulse,
       pulseSensorStatus: this.pulseSensorStatus,
+      fingerDetected: !isExplicitNoFinger && currentPulseStatus !== 'disconnected',
+      measurementState: rawState || (currentPulseStatus === 'no_finger' ? 'NO_FINGER' : 'VALID'),
+      signalQuality: signalQuality || 'MODERATE',
+      heartRateValid: validatedBpm != null,
+      spo2Valid: validatedSpo2 != null,
 
       // AD8232
       ecg: hasActiveECG ? latestSample : null,
@@ -5261,6 +5616,14 @@ class ECGCanvasService {
     this.lpFiltered = 0.0;
     this.peakSpanEMA = 350.0;     // динамический диапазон для AGC
 
+    // 50 Гц Notch-фильтр (Биквад Direct Form II Transposed, Q=6, fs=250Hz)
+    this.notch_s1 = 0.0;
+    this.notch_s2 = 0.0;
+
+    // Детектор шума / обрыва электродов
+    this.recentSamplesWindow = [];
+    this.isSignalNoisyOrDisconnected = false;
+
     this.invert = false;          // инверсия полярности (если электроды перепутаны)
     this.leadsOff = false;        // обрыв электродов (сообщает ble.js через setLeadsOff)
     this.settleLeft = 0;          // сколько отсчётов ещё идёт подстройка после старта/обрыва
@@ -5391,6 +5754,10 @@ class ECGCanvasService {
     this.drainAccum = 0;
     this.baselineInitialized = false;
     this.lpFiltered = 0.0;
+    this.notch_s1 = 0.0;
+    this.notch_s2 = 0.0;
+    this.recentSamplesWindow = [];
+    this.isSignalNoisyOrDisconnected = false;
     this.invalidRun = 0;
     this.lastRealSampleTime = 0;
     this.lastValidSampleTime = 0;
@@ -5472,32 +5839,65 @@ class ECGCanvasService {
     if (!this.baselineInitialized) {
       this.baselineEMA = adcValue;
       this.lpFiltered = 0.0;
+      this.notch_s1 = 0.0;
+      this.notch_s2 = 0.0;
+      this.recentSamplesWindow = [];
       this.baselineInitialized = true;
       this.settleLeft = SETTLE_SAMPLES; // короткая подстройка: фильтр сходится, линия не рисуется
     }
 
+    // Окно последних отсчетов для выявления обрыва электродов и насыщения наводкой 50 Гц
+    this.recentSamplesWindow.push(adcValue);
+    if (this.recentSamplesWindow.length > 50) {
+      this.recentSamplesWindow.shift();
+      let minVal = 4095;
+      let maxVal = 0;
+      for (let s = 0; s < this.recentSamplesWindow.length; s++) {
+        if (this.recentSamplesWindow[s] < minVal) minVal = this.recentSamplesWindow[s];
+        if (this.recentSamplesWindow[s] > maxVal) maxVal = this.recentSamplesWindow[s];
+      }
+      // Если размах превышает 2200 отсчетов (rail-to-rail колебания висящих проводов)
+      // или если сигнал прилип к границам ADC
+      const span = maxVal - minVal;
+      this.isSignalNoisyOrDisconnected = (span > 2200) || (minVal <= 60 && maxVal >= 3900);
+    }
+
     // 1. Удаление постоянной составляющей и дрейфа изолинии (high-pass ~0.5 Гц).
-    // Изолиния — бегущее среднее самого сигнала, а не константа 2048: выход AD8232
-    // сидит около 1.5 В (≈1800–2000 отсчётов) и плавает от электродов и кожи.
     const settling = this.settleLeft > 0;
     this.baselineEMA += (adcValue - this.baselineEMA) * (settling ? SETTLE_HP_ALPHA : HP_ALPHA);
     const acSignal = adcValue - this.baselineEMA;
 
     this._trackWindowStats(adcValue, acSignal);
 
-    // 2. Низкочастотный IIR-фильтр (~25 Гц): сглаживает ВЧ-шум.
-    // Однополюсный фильтр сетевую наводку 50 Гц заметно не подавляет.
-    this.lpFiltered += (acSignal - this.lpFiltered) * LP_ALPHA;
+    // 2. Режекторный Notch-фильтр 50 Гц (подавление сетевой наводки 220В)
+    // Direct Form II Transposed: b0=0.926566, b1=-0.572649, b2=0.926566, a1=-0.572649, a2=0.853130
+    const nb0 = 0.926566;
+    const nb1 = -0.572649;
+    const nb2 = 0.926566;
+    const na1 = -0.572649;
+    const na2 = 0.853130;
+
+    const notchFiltered = nb0 * acSignal + this.notch_s1;
+    this.notch_s1 = nb1 * acSignal - na1 * notchFiltered + this.notch_s2;
+    this.notch_s2 = nb2 * acSignal - na2 * notchFiltered;
+
+    // 3. Низкочастотный IIR-фильтр (~25 Гц): сглаживание остаточного шума
+    this.lpFiltered += (notchFiltered - this.lpFiltered) * LP_ALPHA;
+
+    // Если электроды отсоединены или ловят дикую наводку - держим спокойную изолинию вместо частокола
+    if (this.isSignalNoisyOrDisconnected) {
+      this._enqueue(0.0);
+      return;
+    }
 
     // Во время подстройки линию не рисуем (NaN) и AGC не трогаем:
-    // переходный процесс не должен раздувать масштаб и «топить» сигнал вниз.
     if (settling) {
       this.settleLeft--;
       this._enqueue(NaN);
       return;
     }
 
-    // 3. Автоматическая подстройка масштаба (AGC) с верхним пределом
+    // 4. Автоматическая подстройка масштаба (AGC) с физиологическим коридором
     const absVal = Math.abs(this.lpFiltered);
     if (absVal > this.peakSpanEMA) {
       this.peakSpanEMA = Math.min(PEAK_SPAN_MAX, this.peakSpanEMA * 0.95 + absVal * 0.05);
@@ -5505,14 +5905,14 @@ class ECGCanvasService {
       this.peakSpanEMA = Math.max(120.0, this.peakSpanEMA * 0.9995);
     }
 
-    // 4. Нормализация в диапазон около [-1.0, 1.0]
-    const scaleFactor = Math.max(160.0, this.peakSpanEMA * 1.35);
+    // 5. Нормализация в диапазон [-0.85, 0.85]
+    const scaleFactor = Math.max(220.0, this.peakSpanEMA * 1.4);
     let norm = this.lpFiltered / scaleFactor;
-    if (this.invert) norm = -norm; // полярность перевёрнута (электроды перепутаны)
+    if (this.invert) norm = -norm;
 
-    // Мягкое скругление вместо жёсткого клиппинга
-    if (norm > 1.25) norm = 1.25 + Math.tanh(norm - 1.25) * 0.25;
-    if (norm < -1.25) norm = -1.25 + Math.tanh(norm + 1.25) * 0.25;
+    // Мягкое скругление
+    if (norm > 0.85) norm = 0.85 + Math.tanh(norm - 0.85) * 0.15;
+    if (norm < -0.85) norm = -0.85 + Math.tanh(norm + 0.85) * 0.15;
 
     this._enqueue(norm);
   }
@@ -5613,7 +6013,7 @@ class ECGCanvasService {
       return { key: 'demo', live: true, text: 'ДЕМО 250 Гц', cls: PILL_AMBER };
     }
 
-    if (this.leadsOff) {
+    if (this.leadsOff || this.isSignalNoisyOrDisconnected) {
       return { key: 'leads_off', live: false, text: 'Электроды не подключены', cls: PILL_RED };
     }
 
@@ -6021,6 +6421,10 @@ const App = {
       this.goToSurveyStep(1);
     }
 
+    // Проверка административного маршрута (#admin, #admin/dashboard)
+    this.checkAdminRoute();
+    window.addEventListener('hashchange', () => this.checkAdminRoute());
+
     // Сторожевой таймер активности реальных датчиков (Watchdog)
     setInterval(() => {
       if (this.state.isConnected && !this.state.isDemo) {
@@ -6083,7 +6487,7 @@ const App = {
   // ========================================================
   showScreen(screenId) {
     this.state.currentScreen = screenId;
-    ['screen-onboarding-connect', 'screen-onboarding-survey', 'screen-main-app'].forEach(id => {
+    ['screen-onboarding-connect', 'screen-onboarding-survey', 'screen-main-app', 'screen-admin', 'screen-admin-dashboard'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         el.classList.add('hidden');
@@ -6104,6 +6508,11 @@ const App = {
       if (this.state.isDemo || this.state.isConnected) {
         this.ecgCanvas.setStreamActive(true, this.state.isDemo);
       }
+    } else if (screenId === 'admin') {
+      this.renderAdminPanel();
+    } else if (screenId === 'admin-dashboard') {
+      this.renderAdminDashboard();
+      this.startAdminSyntheticECG();
     }
   },
 
@@ -6220,10 +6629,20 @@ const App = {
     const now = Date.now();
     this.state.lastTelemetryTimestamp = now;
 
+    // Сохраняем расширенные атрибуты BLE-телеметрии
+    this.state.fingerDetected = data.fingerDetected != null ? data.fingerDetected : (data.pulseSensorStatus !== 'no_finger');
+    this.state.measurementState = data.measurementState || (this.state.fingerDetected ? 'VALID' : 'NO_FINGER');
+    this.state.signalQuality = data.signalQuality || 'MODERATE';
+    this.state.rawBLEPacket = data.rawJSON || null;
+
     // 1. НЕЗАВИСИМАЯ ОБРАБОТКА ДАТЧИКА ПУЛЬСОКСИМЕТРИИ MAX30102
-    if (data.hasActivePulse && data.bpm != null && data.bpm > 0) {
-      this.state.bpm = data.bpm;
-      this.state.spo2 = data.spo2;
+    if (this.state.fingerDetected && data.hasActivePulse) {
+      if (data.bpm != null && data.bpm > 0) {
+        this.state.bpm = data.bpm;
+      }
+      if (data.spo2 != null && data.spo2 > 0) {
+        this.state.spo2 = data.spo2;
+      }
       this.state.lastPulseTimestamp = now;
       this.state.pulseSensorStatus = data.pulseSensorStatus || 'ok';
     } else {
@@ -6338,6 +6757,13 @@ const App = {
     if (this.state.currentSurveyStep === 4) {
       this.updateSurveyDeviceStatus();
     }
+
+    this.state.lastRawJSON = data.rawJSON;
+    if (this.state.currentScreen === 'admin') {
+      this.renderAdminPanel();
+    } else if (this.state.currentScreen === 'admin-dashboard') {
+      this.renderAdminDashboard();
+    }
   },
 
   handleBLEStatusChange(status) {
@@ -6380,6 +6806,11 @@ const App = {
     this.renderDashboardMetrics();
     if (this.state.currentSurveyStep === 4) {
       this.updateSurveyDeviceStatus();
+    }
+    if (this.state.currentScreen === 'admin') {
+      this.renderAdminPanel();
+    } else if (this.state.currentScreen === 'admin-dashboard') {
+      this.renderAdminDashboard();
     }
   },
 
@@ -9146,6 +9577,340 @@ const App = {
       circleEl.style.borderColor = '#10b981';
       circleEl.style.backgroundColor = 'rgba(16, 185, 129, 0.2)';
     }
+  },
+
+  // ========================================================
+  // АДМИНИСТРАТИВНАЯ ПАНЕЛЬ И ВХОД (Strict Password: 2020)
+  // ========================================================
+  _logoClicks: 0,
+  _lastLogoClick: 0,
+  _adminECGAnimId: null,
+
+  handleLogoClick(event) {
+    if (event) event.stopPropagation();
+    const now = Date.now();
+    if (now - this._lastLogoClick > 3000) {
+      this._logoClicks = 0;
+    }
+    this._lastLogoClick = now;
+    this._logoClicks++;
+
+    if (this._logoClicks >= 5) {
+      this._logoClicks = 0;
+      this.openAdminAuthModal();
+    }
+  },
+
+  openAdminAuthModal() {
+    const modal = document.getElementById('modal-admin-auth');
+    const input = document.getElementById('admin-auth-pass');
+    const errorBox = document.getElementById('admin-auth-error');
+    if (errorBox) {
+      errorBox.textContent = '';
+      errorBox.classList.add('hidden');
+    }
+    if (input) input.value = '';
+    if (modal) modal.classList.remove('hidden');
+    setTimeout(() => { if (input) input.focus(); }, 100);
+  },
+
+  closeAdminAuthModal() {
+    const modal = document.getElementById('modal-admin-auth');
+    if (modal) modal.classList.add('hidden');
+  },
+
+  async submitAdminAuth() {
+    const input = document.getElementById('admin-auth-pass');
+    const errorBox = document.getElementById('admin-auth-error');
+    const submitBtn = document.getElementById('admin-auth-submit-btn');
+    const password = input ? input.value : '';
+
+    if (!password) return;
+
+    if (submitBtn) submitBtn.disabled = true;
+    if (errorBox) errorBox.classList.add('hidden');
+
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'login', password })
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success && data.token) {
+        sessionStorage.setItem('qamqor_admin_token', data.token);
+        this.closeAdminAuthModal();
+        window.location.hash = '#admin';
+        this.showScreen('admin');
+        this.showToast('Авторизация успешна. Добро пожаловать в консоль инженера!', 'success');
+      } else {
+        const msg = data.error || 'Неверный пароль';
+        if (errorBox) {
+          errorBox.textContent = msg;
+          errorBox.classList.remove('hidden');
+        }
+      }
+    } catch (e) {
+      if (errorBox) {
+        errorBox.textContent = 'Ошибка соединения с сервером авторизации';
+        errorBox.classList.remove('hidden');
+      }
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  },
+
+  async checkAdminRoute() {
+    const hash = window.location.hash || '';
+    const path = window.location.pathname || '';
+    const isAdmin = hash === '#admin' || hash.startsWith('#admin') || path.startsWith('/admin');
+
+    if (!isAdmin) return;
+
+    const token = sessionStorage.getItem('qamqor_admin_token');
+    if (!token) {
+      if (this.state.currentScreen === 'admin' || this.state.currentScreen === 'admin-dashboard') {
+        this.showScreen('main-app');
+      }
+      this.openAdminAuthModal();
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'verify', token })
+      });
+      const data = await res.json();
+      if (res.ok && data.valid) {
+        if (hash === '#admin/dashboard' || path === '/admin/dashboard') {
+          this.showScreen('admin-dashboard');
+        } else {
+          this.showScreen('admin');
+        }
+      } else {
+        sessionStorage.removeItem('qamqor_admin_token');
+        this.showScreen('main-app');
+        this.openAdminAuthModal();
+      }
+    } catch {
+      if (hash === '#admin/dashboard' || path === '/admin/dashboard') {
+        this.showScreen('admin-dashboard');
+      } else {
+        this.showScreen('admin');
+      }
+    }
+  },
+
+  adminLogout() {
+    sessionStorage.removeItem('qamqor_admin_token');
+    if (this._adminECGAnimId) {
+      cancelAnimationFrame(this._adminECGAnimId);
+      this._adminECGAnimId = null;
+    }
+    window.location.hash = '';
+    this.showScreen('main-app');
+    this.showToast('Вы вышли из консоли администратора', 'info');
+  },
+
+  openAdminDashboard() {
+    window.location.hash = '#admin/dashboard';
+    this.showScreen('admin-dashboard');
+  },
+
+  renderAdminPanel() {
+    const blePill = document.getElementById('admin-ble-status-pill');
+    const bleDot = document.getElementById('admin-ble-dot');
+    const fingerEl = document.getElementById('admin-status-finger');
+    const qualityEl = document.getElementById('admin-status-quality');
+    const hrEl = document.getElementById('admin-status-hr');
+    const spo2El = document.getElementById('admin-status-spo2');
+    const rawPktEl = document.getElementById('admin-raw-packet');
+    const pktCountEl = document.getElementById('admin-pkt-counter');
+
+    const lstatEl = document.getElementById('admin-model-lstat');
+    const ldynEl = document.getElementById('admin-model-ldyn');
+    const qscoreEl = document.getElementById('admin-model-qscore');
+
+    if (blePill && bleDot) {
+      if (this.state.isConnected) {
+        blePill.textContent = 'Подключено';
+        blePill.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800';
+        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
+      } else {
+        blePill.textContent = 'Отключено';
+        blePill.className = 'text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700';
+        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
+      }
+    }
+
+    const finger = this.state.fingerDetected ?? (this.state.pulseSensorStatus === 'ok');
+    const stateStr = this.state.measurementState || (finger ? 'VALID' : 'NO_FINGER');
+    const qualityStr = this.state.signalQuality || (finger ? 'GOOD' : 'POOR');
+
+    if (fingerEl) fingerEl.textContent = stateStr;
+    if (qualityEl) qualityEl.textContent = qualityStr;
+
+    const hrVal = (finger && this.state.bpm) ? `${this.state.bpm} уд/мин (true)` : '— (false)';
+    const spVal = (finger && this.state.spo2) ? `${this.state.spo2}% (true)` : '— (false)';
+
+    if (hrEl) hrEl.textContent = hrVal;
+    if (spo2El) spo2El.textContent = spVal;
+
+    if (rawPktEl && this.state.lastRawJSON) {
+      rawPktEl.textContent = JSON.stringify(this.state.lastRawJSON, null, 2);
+    }
+    if (pktCountEl && this.bleService) {
+      pktCountEl.textContent = `Пакет #${this.bleService.packetCount || 0}`;
+    }
+
+    if (lstatEl && this.state.lStatResult) {
+      lstatEl.textContent = this.state.lStatResult.score != null ? this.state.lStatResult.score.toFixed(1) : '—';
+    }
+    if (ldynEl && this.state.lDynResult) {
+      ldynEl.textContent = this.state.lDynResult.score != null ? this.state.lDynResult.score.toFixed(1) : '—';
+    }
+    if (qscoreEl && this.state.qualityResult) {
+      qscoreEl.textContent = this.state.qualityResult.score != null ? this.state.qualityResult.score.toFixed(1) : '—';
+    }
+  },
+
+  renderAdminDashboard() {
+    const bpmEl = document.getElementById('admin-dash-bpm');
+    const bpmStatus = document.getElementById('admin-dash-bpm-status');
+    const bpmDot = document.getElementById('admin-dash-bpm-dot');
+
+    const spo2El = document.getElementById('admin-dash-spo2');
+    const spo2Status = document.getElementById('admin-dash-spo2-status');
+    const spo2Dot = document.getElementById('admin-dash-spo2-dot');
+
+    const contactEl = document.getElementById('admin-dash-contact');
+    const qualityEl = document.getElementById('admin-dash-quality');
+    const contactDot = document.getElementById('admin-dash-contact-dot');
+
+    const timeEl = document.getElementById('admin-dash-last-time');
+    const bleStateEl = document.getElementById('admin-dash-ble-state');
+    const bleDot = document.getElementById('admin-dash-ble-dot');
+
+    const bpmLabel = document.getElementById('admin-ecg-bpm-label');
+
+    const finger = this.state.fingerDetected ?? (this.state.pulseSensorStatus === 'ok');
+
+    // КРИТИЧНО: При отсутствии пальца (NO FINGER) строго показывать '--', не зависать!
+    if (!finger || !this.state.isConnected) {
+      if (bpmEl) bpmEl.textContent = '—';
+      if (bpmStatus) bpmStatus.textContent = 'NO FINGER';
+      if (bpmDot) bpmDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
+
+      if (spo2El) spo2El.textContent = '—';
+      if (spo2Status) spo2Status.textContent = 'NO FINGER';
+      if (spo2Dot) spo2Dot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
+
+      if (contactEl) contactEl.textContent = 'NO FINGER';
+      if (qualityEl) qualityEl.textContent = 'Качество: POOR';
+      if (contactDot) contactDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500';
+    } else {
+      if (bpmEl) bpmEl.textContent = this.state.bpm ? this.state.bpm : '—';
+      if (bpmStatus) bpmStatus.textContent = this.state.bpm ? 'VALID' : 'MEASURING...';
+      if (bpmDot) bpmDot.className = 'w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse';
+
+      if (spo2El) spo2El.textContent = this.state.spo2 ? this.state.spo2 : '—';
+      if (spo2Status) spo2Status.textContent = this.state.spo2 ? 'VALID' : 'CALCULATING...';
+      if (spo2Dot) spo2Dot.className = 'w-2.5 h-2.5 rounded-full bg-sky-500';
+
+      if (contactEl) contactEl.textContent = this.state.measurementState || 'VALID';
+      if (qualityEl) qualityEl.textContent = `Качество: ${this.state.signalQuality || 'GOOD'}`;
+      if (contactDot) contactDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+    }
+
+    if (this.state.lastPulseTimestamp > 0) {
+      const d = new Date(this.state.lastPulseTimestamp);
+      if (timeEl) timeEl.textContent = d.toTimeString().split(' ')[0];
+    } else {
+      if (timeEl) timeEl.textContent = '--:--:--';
+    }
+
+    if (bleStateEl && bleDot) {
+      if (this.state.isConnected) {
+        bleStateEl.textContent = `BLE: ${this.state.deviceName || 'Qamqor Band'}`;
+        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+      } else {
+        bleStateEl.textContent = 'BLE: Отключено';
+        bleDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-600';
+      }
+    }
+
+    if (bpmLabel) {
+      bpmLabel.textContent = `${this.state.bpm || 72} уд/мин`;
+    }
+  },
+
+  startAdminSyntheticECG() {
+    if (this._adminECGAnimId) return;
+    const canvas = document.getElementById('adminECGCanvas');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    let t = 0;
+    const fs = 250;
+    const dt = 1 / fs;
+    let sweepX = 0;
+    const pxPerSec = 125;
+    const pxPerSample = pxPerSec / fs;
+
+    const draw = () => {
+      if (this.state.currentScreen !== 'admin-dashboard') {
+        this._adminECGAnimId = null;
+        return;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const dpr = window.devicePixelRatio || 1;
+        const targetW = Math.floor(rect.width * dpr);
+        const targetH = Math.floor(rect.height * dpr);
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+          canvas.width = targetW;
+          canvas.height = targetH;
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.scale(dpr, dpr);
+        }
+
+        const w = rect.width;
+        const h = rect.height;
+        const midY = h / 2;
+
+        const bpm = (this.state.fingerDetected && this.state.bpm) ? this.state.bpm : 72;
+        const samplesPerFrame = Math.round(fs / 60);
+
+        for (let i = 0; i < samplesPerFrame; i++) {
+          const val = this.ecgCanvas.generateSyntheticECG(t, bpm);
+          t += dt;
+
+          const nextX = (sweepX + pxPerSample) % w;
+          ctx.fillStyle = '#060b13';
+          ctx.fillRect(sweepX, 0, 16, h);
+
+          ctx.strokeStyle = '#34d399';
+          ctx.shadowColor = '#10b981';
+          ctx.shadowBlur = 4;
+          ctx.lineWidth = 2.0;
+          ctx.beginPath();
+          ctx.moveTo(sweepX, midY - val * (h * 0.38));
+          ctx.lineTo(nextX, midY - val * (h * 0.38));
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+
+          sweepX = nextX;
+        }
+      }
+
+      this._adminECGAnimId = requestAnimationFrame(draw);
+    };
+
+    this._adminECGAnimId = requestAnimationFrame(draw);
   },
 
   registerSW() {

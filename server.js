@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { exec } from 'child_process';
 import advisorHandler from './api/advisor.js';
+import authHandler from './api/auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,7 +29,15 @@ const server = http.createServer((req, res) => {
     return advisorHandler(req, res);
   }
 
-  if (reqUrl === '/') reqUrl = '/index.html';
+  // Route /api/auth
+  if (reqUrl === '/api/auth') {
+    return authHandler(req, res);
+  }
+
+  // SPA routes: /, /admin, /admin/dashboard -> /index.html
+  if (reqUrl === '/' || reqUrl === '/admin' || reqUrl === '/admin/dashboard') {
+    reqUrl = '/index.html';
+  }
 
   const filePath = path.join(__dirname, reqUrl);
 
