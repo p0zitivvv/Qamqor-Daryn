@@ -4437,21 +4437,16 @@ class ECGCanvasService {
   // ------------------------------------------------------------------
 
   generateSyntheticSample(bpm) {
-    // При легком волнении базовый ритм умеренно учащен (~78-84 уд/мин)
-    const baseBpm = Math.max(45, Math.min(180, bpm || 80));
+    // Базовый синусовый ритм (~72-80 уд/мин)
+    const baseBpm = Math.max(50, Math.min(160, bpm || 75));
 
-    // 1. Дыхательный цикл (~0.24 Гц, ~14 вдохов/мин)
-    const respHz = 0.24;
+    // 1. Дыхательный цикл (~0.22 Гц, ~13 вдохов/мин)
+    const respHz = 0.22;
     this.synthRespPhase = (this.synthRespPhase + respHz / SAMPLE_RATE_HZ) % 1.0;
     const respWave = Math.sin(2 * Math.PI * this.synthRespPhase);
 
-    // 2. Вазомоторные волны Майера (~0.09 Гц, вегетативный тонус)
-    const mayerHz = 0.09;
-    this.synthMayerPhase = (this.synthMayerPhase + mayerHz / SAMPLE_RATE_HZ) % 1.0;
-    const mayerWave = Math.sin(2 * Math.PI * this.synthMayerPhase);
-
-    // Мгновенный ритм: дыхательная аритмия + медленные вазомоторные волны + естественный микро-джиттер
-    const currentInstBpm = baseBpm * (1.0 + 0.065 * respWave + 0.035 * mayerWave + this.synthJitter);
+    // Мягкая физиологическая дыхательная синусовая аритмия (RSA ~ ±3.5%)
+    const currentInstBpm = baseBpm * (1.0 + 0.035 * respWave);
     const dPhase = currentInstBpm / (60 * SAMPLE_RATE_HZ);
 
     this.synthPhase += dPhase;
@@ -4459,62 +4454,43 @@ class ECGCanvasService {
       this.synthPhase -= 1.0;
       this.synthBeatIndex++;
 
-      // Случайный затухающий джиттер интервала следующего удара (AR-1 процесс)
-      this.synthJitter = 0.65 * this.synthJitter + 0.35 * ((Math.random() - 0.5) * 0.06);
-
-      // Вариации амплитуд зубцов от цикла к циклу (эффект легкого волнения и дыхания)
-      const targetR = 1.18 + 0.11 * respWave + 0.04 * mayerWave + (Math.random() - 0.5) * 0.07;
-      const targetT = 0.34 + 0.05 * mayerWave + 0.03 * respWave + (Math.random() - 0.5) * 0.05;
-      const targetP = 0.16 + (Math.random() - 0.5) * 0.03;
-      const targetPQ = 0.09 + (Math.random() - 0.5) * 0.01;
-
-      // Плавное подтягивание параметров без скачков
-      this.synthRHeight = this.synthRHeight * 0.45 + targetR * 0.55;
-      this.synthTHeight = this.synthTHeight * 0.45 + targetT * 0.55;
-      this.synthPHeight = this.synthPHeight * 0.45 + targetP * 0.55;
-      this.synthPQWidth = this.synthPQWidth * 0.45 + targetPQ * 0.55;
+      // Плавная естественная вариация вольтажа зубца R и T от дыхания (±5%)
+      const targetR = 1.10 + 0.06 * respWave;
+      const targetT = 0.29 + 0.02 * respWave;
+      this.synthRHeight = this.synthRHeight * 0.6 + targetR * 0.4;
+      this.synthTHeight = this.synthTHeight * 0.6 + targetT * 0.4;
     }
 
     const p = this.synthPhase;
     let val = 0.0;
 
-    // 1. P-зубец (деполяризация предсердий)
-    const pStart = 0.11;
-    const pEnd = pStart + this.synthPQWidth;
-    if (p >= pStart && p < pEnd) {
-      val += this.synthPHeight * Math.sin(((p - pStart) / this.synthPQWidth) * Math.PI);
+    // 1. P-зубец (деполяризация предсердий, 0.12 .. 0.20)
+    if (p >= 0.12 && p < 0.20) {
+      val += 0.14 * Math.sin(((p - 0.12) / 0.08) * Math.PI);
     }
-    // 2. Q-зубец (деполяризация межжелудочковой перегородки)
+    // 2. Q-зубец (деполяризация межжелудочковой перегородки, 0.28 .. 0.30)
     else if (p >= 0.28 && p < 0.30) {
-      val -= 0.13 * Math.sin(((p - 0.28) / 0.02) * Math.PI);
+      val -= 0.11 * Math.sin(((p - 0.28) / 0.02) * Math.PI);
     }
-    // 3. R-зубец (главный пик деполяризации желудочков с физиологической крутизной)
+    // 3. R-зубец (высокий чистый систолический зубец, 0.30 .. 0.34, без клиппинга)
     else if (p >= 0.30 && p < 0.34) {
       val += this.synthRHeight * Math.sin(((p - 0.30) / 0.04) * Math.PI);
     }
-    // 4. S-зубец (отрицательное отклонение желудочков)
-    else if (p >= 0.34 && p < 0.385) {
-      val -= (0.23 + 0.05 * (this.synthRHeight - 1.18)) * Math.sin(((p - 0.34) / 0.045) * Math.PI);
+    // 4. S-зубец (отрицательное отклонение желудочков, 0.34 .. 0.38)
+    else if (p >= 0.34 && p < 0.38) {
+      val -= 0.22 * Math.sin(((p - 0.34) / 0.04) * Math.PI);
     }
-    // 5. ST-сегмент (легкая естественная выпуклость при волнении)
-    else if (p >= 0.385 && p < 0.48) {
-      val += 0.02 * Math.sin(((p - 0.385) / 0.095) * Math.PI);
-    }
-    // 6. T-зубец (асимметричная физиологическая реполяризация желудочков)
-    else if (p >= 0.48 && p < 0.70) {
-      const tProg = (p - 0.48) / 0.22;
-      val += this.synthTHeight * Math.sin(tProg * Math.PI) * (1.1 - 0.2 * tProg);
-    }
-    // 7. U-зубец (естественный физиологический подъемчик на изолинии перед следующим комплексом)
-    else if (p >= 0.72 && p < 0.82) {
-      val += 0.045 * Math.sin(((p - 0.72) / 0.10) * Math.PI);
+    // 5. T-зубец (чистая физиологическая реполяризация, 0.48 .. 0.68)
+    else if (p >= 0.48 && p < 0.68) {
+      const tProg = (p - 0.48) / 0.20;
+      val += this.synthTHeight * Math.sin(tProg * Math.PI) * (1.05 - 0.1 * tProg);
     }
 
-    // Естественные плавные подъемы и спады изолинии (дыхание + вазомоторные волны Майера)
-    val += 0.028 * respWave + 0.016 * mayerWave;
+    // Мягкий дыхательный дрейф изолинии
+    val += 0.015 * respWave;
 
-    // Микроструктура фосфорного луча
-    val += (Math.random() - 0.5) * 0.008;
+    // Микрошум луча
+    val += (Math.random() - 0.5) * 0.004;
 
     return val;
   }
@@ -5015,12 +4991,14 @@ const App = {
       if (tabId === 'home') {
         this.renderDashboardMetrics();
         if (this.ecgCanvas) {
-          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected, this.state.isDemo);
+          const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected || allowSynth, allowSynth);
         }
       } else if (tabId === 'metrics') {
         this.renderMyRiskTab();
         if (this.ecgCanvas) {
-          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected, this.state.isDemo);
+          const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected || allowSynth, allowSynth);
         }
       } else if (tabId === 'factors') {
         this.renderDynamicsTab();
@@ -5093,15 +5071,13 @@ const App = {
 
     // 2. НЕЗАВИСИМАЯ ОБРАБОТКА ДАТЧИКА ЭКГ AD8232 (250 Гц)
     if (this.state.hiddenAdminMode || this.state.forceDemoECG) {
-      // Скрытый режим: ЭКГ СТРОГО В ЖИВОМ DEMO-РЕЖИМЕ (полиморфная симуляция)
+      // Скрытый режим админа: ЭКГ СТРОГО В ЖИВОМ DEMO-РЕЖИМЕ (полиморфная чистая симуляция)
       this.state.lastECGTimestamp = now;
       this.state.ecgSensorStatus = 'ok';
       if (this.ecgCanvas) {
         this.ecgCanvas.setLeadsOff(false);
         this.ecgCanvas.setStreamActive(true, true); // allowSynthetic = true!
-        if (this.state.bpm) {
-          this.ecgCanvas.setBPM(this.state.bpm);
-        }
+        this.ecgCanvas.setBPM(this.state.bpm || 75);
       }
     } else if (data.hasActiveECG) {
       this.state.lastECGTimestamp = now;
@@ -5133,7 +5109,8 @@ const App = {
           this.ecgCanvas.setLeadsOff(true);
         }
         if (!this.state.lastECGTimestamp || (now - this.state.lastECGTimestamp > 3500)) {
-          this.ecgCanvas.setStreamActive(this.state.isConnected, false);
+          const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+          this.ecgCanvas.setStreamActive(this.state.isConnected || allowSynth, allowSynth);
         }
       }
     }
@@ -5229,7 +5206,8 @@ const App = {
         this._hasNotifiedConnect = true;
       }
       if (this.ecgCanvas) {
-        this.ecgCanvas.setStreamActive(true, false); // allowSynthetic = false
+        const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+        this.ecgCanvas.setStreamActive(true, allowSynth);
       }
     } else {
       this._hasNotifiedConnect = false;
@@ -5242,7 +5220,8 @@ const App = {
         this.showToast(status.statusText || 'Связь с браслетом разорвана', 'warning');
       }
       if (this.ecgCanvas) {
-        this.ecgCanvas.setStreamActive(false, false);
+        const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+        this.ecgCanvas.setStreamActive(allowSynth, allowSynth);
       }
     }
     this.updateConnectionUI();
@@ -5274,7 +5253,8 @@ const App = {
     this.state.lastECGTimestamp = 0;
     if (this.ecgCanvas) {
       this.ecgCanvas.realECGQueue = [];
-      this.ecgCanvas.setStreamActive(this.state.isConnected, false);
+      const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+      this.ecgCanvas.setStreamActive(this.state.isConnected || allowSynth, allowSynth);
     }
   },
 
@@ -5289,7 +5269,8 @@ const App = {
       this.clearBiometrics();
     }
     if (this.ecgCanvas) {
-      this.ecgCanvas.setStreamActive(this.state.isConnected, false);
+      const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+      this.ecgCanvas.setStreamActive(this.state.isConnected || allowSynth, allowSynth);
     }
     this.updateConnectionUI();
     this.recalculateModel();
@@ -5707,10 +5688,11 @@ const App = {
     const homeEcgEmpty = document.getElementById('home-ecg-empty-state');
     const liveEcgEmpty = document.getElementById('ecg-empty-state');
 
+    const isSynthECG = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
     const updatePill = (pill) => {
       if (!pill) return;
-      if (this.state.isDemo) {
-        pill.textContent = 'DEMO 250 Гц';
+      if (isSynthECG) {
+        pill.textContent = 'DEMO ECG • 250 Гц';
         pill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-mono font-medium';
       } else if (hasECG) {
         pill.textContent = 'LIVE 250 Гц';
@@ -5726,12 +5708,12 @@ const App = {
     updatePill(homeEcgPill);
     updatePill(liveEcgPill);
 
+    const isEcgLive = isSynthECG || hasECG;
     if (homeEcgDot) {
-      homeEcgDot.className = (this.state.isDemo || hasECG)
+      homeEcgDot.className = isEcgLive
         ? 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse'
         : 'w-2.5 h-2.5 rounded-full bg-slate-300';
     }
-    const isEcgLive = this.state.isDemo || hasECG;
     if (homeEcgEmpty) {
       if (isEcgLive) homeEcgEmpty.classList.add('hidden');
       else homeEcgEmpty.classList.remove('hidden');

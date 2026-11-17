@@ -322,12 +322,14 @@ export const App = {
       if (tabId === 'home') {
         this.renderDashboardMetrics();
         if (this.ecgCanvas) {
-          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected, this.state.isDemo);
+          const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected || allowSynth, allowSynth);
         }
       } else if (tabId === 'metrics') {
         this.renderMyRiskTab();
         if (this.ecgCanvas) {
-          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected, this.state.isDemo);
+          const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+          this.ecgCanvas.setStreamActive(this.state.isDemo || this.state.isConnected || allowSynth, allowSynth);
         }
       } else if (tabId === 'factors') {
         this.renderDynamicsTab();
@@ -400,15 +402,13 @@ export const App = {
 
     // 2. НЕЗАВИСИМАЯ ОБРАБОТКА ДАТЧИКА ЭКГ AD8232 (250 Гц)
     if (this.state.hiddenAdminMode || this.state.forceDemoECG) {
-      // Скрытый режим: ЭКГ СТРОГО В ЖИВОМ DEMO-РЕЖИМЕ (полиморфная симуляция)
+      // Скрытый режим админа: ЭКГ СТРОГО В ЖИВОМ DEMO-РЕЖИМЕ (полиморфная чистая симуляция)
       this.state.lastECGTimestamp = now;
       this.state.ecgSensorStatus = 'ok';
       if (this.ecgCanvas) {
         this.ecgCanvas.setLeadsOff(false);
         this.ecgCanvas.setStreamActive(true, true); // allowSynthetic = true!
-        if (this.state.bpm) {
-          this.ecgCanvas.setBPM(this.state.bpm);
-        }
+        this.ecgCanvas.setBPM(this.state.bpm || 75);
       }
     } else if (data.hasActiveECG) {
       this.state.lastECGTimestamp = now;
@@ -440,7 +440,8 @@ export const App = {
           this.ecgCanvas.setLeadsOff(true);
         }
         if (!this.state.lastECGTimestamp || (now - this.state.lastECGTimestamp > 3500)) {
-          this.ecgCanvas.setStreamActive(this.state.isConnected, false);
+          const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+          this.ecgCanvas.setStreamActive(this.state.isConnected || allowSynth, allowSynth);
         }
       }
     }
@@ -536,7 +537,8 @@ export const App = {
         this._hasNotifiedConnect = true;
       }
       if (this.ecgCanvas) {
-        this.ecgCanvas.setStreamActive(true, false); // allowSynthetic = false
+        const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+        this.ecgCanvas.setStreamActive(true, allowSynth);
       }
     } else {
       this._hasNotifiedConnect = false;
@@ -549,7 +551,8 @@ export const App = {
         this.showToast(status.statusText || 'Связь с браслетом разорвана', 'warning');
       }
       if (this.ecgCanvas) {
-        this.ecgCanvas.setStreamActive(false, false);
+        const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+        this.ecgCanvas.setStreamActive(allowSynth, allowSynth);
       }
     }
     this.updateConnectionUI();
@@ -581,7 +584,8 @@ export const App = {
     this.state.lastECGTimestamp = 0;
     if (this.ecgCanvas) {
       this.ecgCanvas.realECGQueue = [];
-      this.ecgCanvas.setStreamActive(this.state.isConnected, false);
+      const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+      this.ecgCanvas.setStreamActive(this.state.isConnected || allowSynth, allowSynth);
     }
   },
 
@@ -596,7 +600,8 @@ export const App = {
       this.clearBiometrics();
     }
     if (this.ecgCanvas) {
-      this.ecgCanvas.setStreamActive(this.state.isConnected, false);
+      const allowSynth = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
+      this.ecgCanvas.setStreamActive(this.state.isConnected || allowSynth, allowSynth);
     }
     this.updateConnectionUI();
     this.recalculateModel();
@@ -1014,10 +1019,11 @@ export const App = {
     const homeEcgEmpty = document.getElementById('home-ecg-empty-state');
     const liveEcgEmpty = document.getElementById('ecg-empty-state');
 
+    const isSynthECG = Boolean(this.state.isDemo || this.state.hiddenAdminMode || this.state.forceDemoECG);
     const updatePill = (pill) => {
       if (!pill) return;
-      if (this.state.isDemo) {
-        pill.textContent = 'DEMO 250 Гц';
+      if (isSynthECG) {
+        pill.textContent = 'DEMO ECG • 250 Гц';
         pill.className = 'text-[10px] px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-mono font-medium';
       } else if (hasECG) {
         pill.textContent = 'LIVE 250 Гц';
@@ -1033,12 +1039,12 @@ export const App = {
     updatePill(homeEcgPill);
     updatePill(liveEcgPill);
 
+    const isEcgLive = isSynthECG || hasECG;
     if (homeEcgDot) {
-      homeEcgDot.className = (this.state.isDemo || hasECG)
+      homeEcgDot.className = isEcgLive
         ? 'w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse'
         : 'w-2.5 h-2.5 rounded-full bg-slate-300';
     }
-    const isEcgLive = this.state.isDemo || hasECG;
     if (homeEcgEmpty) {
       if (isEcgLive) homeEcgEmpty.classList.add('hidden');
       else homeEcgEmpty.classList.remove('hidden');
