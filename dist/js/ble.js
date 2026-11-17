@@ -269,7 +269,8 @@ export class BLEService {
       this.isConnected = true;
       this.isReconnecting = false;
       this.connectionStartTime = Date.now();
-      this.lastPacketTime = Date.now();
+      const now = Date.now();
+      this.lastPacketTime = now;
 
       this.emitEmptyTelemetry('connected_no_data');
 
@@ -512,15 +513,18 @@ export class BLEService {
 
       if (!rawChunk) return;
 
-      this.lastPacketTime = Date.now();
+      const now = Date.now();
+      this.lastPacketTime = now;
       this.packetCount++;
 
       // Очистка от \0 (null-байтов) и непечатных управляющих символов
       const cleanChunk = rawChunk.replace(/\0/g, '').replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
       this.packetBuffer += cleanChunk;
 
-      if (cleanChunk) {
-        console.log(`%c[QAMQOR BLE] 📥 Пакет #${this.packetCount}: ${cleanChunk}`, 'color: #0F766E; font-weight: bold;');
+      // Защита от перегрузки консоли: логируем только с частотой не более 1 раз/сек или при отладке
+      if (!this._lastChunkLogTime || now - this._lastChunkLogTime >= 1000) {
+        this._lastChunkLogTime = now;
+        // console.debug('[QAMQOR BLE] Поток пакетов активен...');
       }
 
       // Защита от переполнения буфера (сохраняем хвост)
@@ -871,6 +875,11 @@ export class BLEService {
       rPeak: peakDetected,
       instantaneousBpm,
       rrIntervals,
+
+      // Метки времени для диагностики сквозной задержки (Pipeline Latency)
+      t_sensor: Number.isFinite(Number(json.t_sensor)) ? Number(json.t_sensor) : (Number.isFinite(Number(json.timestamp)) ? Number(json.timestamp) : now),
+      t_send: Number.isFinite(Number(json.t_send)) ? Number(json.t_send) : (Number.isFinite(Number(json.timestamp)) ? Number(json.timestamp) : now),
+      t_recv: now,
 
       // Общие агрегированные флаги
       hasValidSensors: hasActivePulse || hasActiveECG,

@@ -153,16 +153,24 @@ export const App = {
     this.state.hiddenAdminMode = localStorage.getItem('qamqor_hidden_admin_mode') === 'true';
     this.state.forceDemoECG = this.state.hiddenAdminMode;
 
-    // Сторожевой таймер активности реальных датчиков (Watchdog)
+    // Сторожевой таймер активности реальных датчиков и актуальности данных (Watchdog, 500 мс)
     setInterval(() => {
       if (this.state.isConnected && !this.state.isDemo) {
         const now = Date.now();
         let stateChanged = false;
 
-        // 1. Независимый Watchdog для MAX30102
-        if (this.state.lastPulseTimestamp > 0 && now - this.state.lastPulseTimestamp > 4500) {
+        // 1. Проверка актуальности пакетов телеметрии от браслета (таймаут 2.5с)
+        if (this.state.lastTelemetryTimestamp > 0 && now - this.state.lastTelemetryTimestamp > 2500) {
+          if (this.state.deviceState !== 'connected_no_data') {
+            this.state.deviceState = 'connected_no_data';
+            stateChanged = true;
+          }
+        }
+
+        // 2. Независимый Watchdog для MAX30102 (таймаут 3.0с)
+        if (this.state.lastPulseTimestamp > 0 && now - this.state.lastPulseTimestamp > 3000) {
           if (this.state.bpm != null || this.state.spo2 != null) {
-            console.log('[BLE Watchdog] Поток пульсоксиметра MAX30102 прекращен (таймаут 4.5с)');
+            console.log('[BLE Watchdog] Поток пульсоксиметра MAX30102 прекращен (таймаут 3.0с)');
             this.state.bpm = null;
             this.state.spo2 = null;
             this.state.pulseSensorStatus = 'no_finger';
@@ -170,10 +178,10 @@ export const App = {
           }
         }
 
-        // 2. Независимый Watchdog для AD8232
-        if (this.state.lastECGTimestamp > 0 && now - this.state.lastECGTimestamp > 4500) {
+        // 3. Независимый Watchdog для AD8232 (таймаут 3.0с)
+        if (this.state.lastECGTimestamp > 0 && now - this.state.lastECGTimestamp > 3000) {
           if (this.state.ecgSensorStatus === 'ok') {
-            console.log('[BLE Watchdog] Поток кардиографа AD8232 прекращен (таймаут 4.5с)');
+            console.log('[BLE Watchdog] Поток кардиографа AD8232 прекращен (таймаут 3.0с)');
             this.state.ecgSensorStatus = 'waiting';
             if (this.ecgCanvas) {
               this.ecgCanvas.realECGQueue = [];
@@ -193,7 +201,7 @@ export const App = {
           this.renderDashboardMetrics();
         }
       }
-    }, 2000);
+    }, 500);
 
     // Минутный таймер для дискретного шага EMA-сглаживания и FSM тревог
     setInterval(() => this.stepCalculationMinute(), 60000);
@@ -352,6 +360,20 @@ export const App = {
 
     const now = Date.now();
     this.state.lastTelemetryTimestamp = now;
+
+    // Временные метки для диагностики задержки (Pipeline Latency)
+    const tSensor = data.t_sensor || data.t_send || data.timestamp || now;
+    const tSend = data.t_send || data.timestamp || now;
+    const tRecv = data.t_recv || now;
+    this.state.telemetryDiagnostics = {
+      t_sensor: tSensor,
+      t_send: tSend,
+      t_recv: tRecv,
+      t_ui: now,
+      fwDelay: Math.max(0, tSend - tSensor),
+      bleDelay: Math.max(0, tRecv - tSend),
+      totalDelayMs: Math.max(0, now - tSensor)
+    };
 
     // Сохраняем расширенные атрибуты BLE-телеметрии
     this.state.fingerDetected = data.fingerDetected != null ? data.fingerDetected : (data.pulseSensorStatus !== 'no_finger');
@@ -840,7 +862,14 @@ export const App = {
   renderDashboardMetrics() {
     const timeStr = this.state.lastUpdateTime || 'Ожидание';
     const lastSyncEl = document.getElementById('app-last-sync-time');
-    if (lastSyncEl) lastSyncEl.textContent = `Синхр: ${timeStr}`;
+    if (lastSyncEl) {
+      if (this.state.telemetryDiagnostics && this.state.isConnected && !this.state.isDemo) {
+        const d = this.state.telemetryDiagnostics;
+        lastSyncEl.textContent = `Синхр: ${timeStr} (задержка ~${d.totalDelayMs}мс)`;
+      } else {
+        lastSyncEl.textContent = `Синхр: ${timeStr}`;
+      }
+    }
 
     // 1. Поток и частота в шапке
     const streamHzEl = document.getElementById('home-stream-hz');
@@ -879,6 +908,10 @@ export const App = {
     if (devDesc) {
       if (this.state.isDemo) {
         devDesc.textContent = 'Генерация виртуальных биосигналов для тестирования';
+      } else if (!this.state.isConnected) {
+        devDesc.textContent = 'Потеряно соединение с браслетом • Проверьте питание';
+      } else if (this.state.deviceState === 'connected_no_data') {
+        devDesc.textContent = 'Браслет подключён • Нет новых данных (ожидание телеметрии)';
       } else if (this.state.hiddenAdminMode && hasPulse) {
         devDesc.textContent = `Браслет ${this.state.deviceName || 'Qamqor_Band'} • Пульс и SpO2 активны (DEMO ECG)`;
       } else if (hasPulse && hasECG) {
@@ -906,12 +939,18 @@ export const App = {
       if (this.state.isDemo) {
         bpmStatus.textContent = 'Норма покоя (симуляция)';
         bpmStatus.className = 'text-[10px] text-emerald-700 font-medium';
+      } else if (!this.state.isConnected) {
+        bpmStatus.textContent = 'Потеряно соединение';
+        bpmStatus.className = 'text-[10px] text-rose-600 font-medium';
       } else if (this.state.bpm != null) {
         bpmStatus.textContent = 'Телеметрия MAX30102';
         bpmStatus.className = 'text-[10px] text-emerald-700 font-medium';
       } else if (this.state.pulseSensorStatus === 'no_finger') {
-        bpmStatus.textContent = 'Приложите палец';
+        bpmStatus.textContent = 'Нет контакта с датчиком';
         bpmStatus.className = 'text-[10px] text-amber-600 font-medium';
+      } else if (this.state.deviceState === 'connected_no_data') {
+        bpmStatus.textContent = 'Нет новых данных';
+        bpmStatus.className = 'text-[10px] text-slate-400 font-medium';
       } else if (this.state.pulseSensorStatus === 'calculating') {
         bpmStatus.textContent = 'Калибровка...';
         bpmStatus.className = 'text-[10px] text-sky-600 font-medium';
@@ -933,12 +972,18 @@ export const App = {
       if (this.state.isDemo) {
         spo2Status.textContent = 'Физиологический оптимум';
         spo2Status.className = 'text-[10px] text-emerald-700 font-medium';
+      } else if (!this.state.isConnected) {
+        spo2Status.textContent = 'Потеряно соединение';
+        spo2Status.className = 'text-[10px] text-rose-600 font-medium';
       } else if (this.state.spo2 != null) {
         spo2Status.textContent = this.state.spo2 >= 95 ? 'Оптимальная сатурация' : 'Снижение SpO2';
         spo2Status.className = this.state.spo2 < 95 ? 'text-[10px] text-amber-600 font-medium' : 'text-[10px] text-emerald-700 font-medium';
       } else if (this.state.pulseSensorStatus === 'no_finger') {
-        spo2Status.textContent = 'Нет контакта';
+        spo2Status.textContent = 'Приложите палец';
         spo2Status.className = 'text-[10px] text-amber-600 font-medium';
+      } else if (this.state.deviceState === 'connected_no_data') {
+        spo2Status.textContent = 'Нет новых данных';
+        spo2Status.className = 'text-[10px] text-slate-400 font-medium';
       } else {
         spo2Status.textContent = 'Ожидание сатурации';
         spo2Status.className = 'text-[10px] text-slate-400 font-medium';

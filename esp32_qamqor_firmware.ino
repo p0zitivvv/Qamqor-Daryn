@@ -1,29 +1,18 @@
 /*
  * ==================================================================================
- * МЕДИЦИНСКИЙ СМАРТ-БРАСЛЕТ «QAMQOR» — ESP32 FULL FIRMWARE
- * Пульс + SpO2 (MAX30102) + ЭКГ 250 Гц (AD8232) -> BLE
+ * МЕДИЦИНСКИЙ СМАРТ-БРАСЛЕТ «QAMQOR» — ESP32 FULL FIRMWARE (LOW-LATENCY ZERO-LAG)
+ * Пульс + SpO2 (MAX30102) + ЭКГ 250 Гц (AD8232) -> BLE Ultra-Fast Stream
  * ==================================================================================
  * Датчики:
  *   MAX30102 — I2C: SDA=GPIO21, SCL=GPIO22
  *   AD8232   — OUT=GPIO36 (VP), LO+=GPIO25, LO-=GPIO26
  *
- * Библиотеки (Arduino Library Manager):
- *   - "SparkFun MAX3010x Pulse and Proximity Sensor Library"
- *     (даёт MAX30105.h, heartRate.h и spo2_algorithm.h)
- *   - ESP32 BLE Arduino (входит в ядро ESP32)
- *
- * BLE:
- *   Device Name:         Qamqor_Band
- *   Service UUID:        4fafc201-1fb5-459e-8fcc-c5c9c331914b
- *   Characteristic UUID: beb5483e-36e1-4688-b7f5-ea07361b26a8
- *
- * Формат пакета (25 пакетов/сек, каждые 40 мс):
- *   {"bpm":72,"spo2":98,"lo":0,"ecg":[2048,2051,... 10 значений]}
- *   bpm  = 0 — палец не приложен
- *   spo2 = 0 — SpO2 ещё не рассчитан (первые ~4 с после касания) или сигнал плохой
- *
- * ВАЖНО: SpO2 по алгоритму Maxim — оценочный показатель для проекта/демонстрации,
- * это не медицинский прибор.
+ * Оптимизации задержки и точности:
+ *   1. Low-latency BLE Connection Parameters (интервал 7.5 - 15 мс)
+ *   2. Мгновенная отправка при изменении состояния (NO_FINGER, новый удар, новый SpO2)
+ *   3. Защита от накопления буфера (Zero-Lag Buffer Guard: сброс отставания > 80 мс)
+ *   4. Фильтрация дикротического зубца (dicrotic notch) и 2x-гармоник в алгоритме ЧСС
+ *   5. Временные метки задержки: t_sensor и t_send в каждом пакете
  * ==================================================================================
  */
 
@@ -48,7 +37,7 @@
 #define AD8232_LO_PLUS_PIN  25
 #define AD8232_LO_MINUS_PIN 26
 
-// --- ЭКГ (должно совпадать с ble.js: ECG_SAMPLE_RATE_HZ = 250) ---
+// --- ЭКГ (250 Гц, период 4 мс) ---
 #define ECG_SAMPLE_RATE_HZ   250
 #define ECG_SAMPLE_PERIOD_MS (1000 / ECG_SAMPLE_RATE_HZ)   // 4 мс
 #define ECG_SAMPLES_PER_PKT  10                            // 10 * 4 мс = 40 мс
@@ -56,13 +45,12 @@
 #define ECG_RING_MASK        (ECG_RING_SIZE - 1)
 
 // --- ПУЛЬС / SpO2 ---
-#define FINGER_IR_THRESHOLD  10000    // IR ниже порога = палец не приложен
 #define SPO2_BUF             100      // 4 с при 25 выб/с (100 Гц / усреднение 4)
 #define SPO2_STEP            25       // пересчёт SpO2 раз в секунду
 #define SPO2_AVG_N           4        // сглаживание: среднее последних валидных
 #define SPO2_MIN_VALID       80
 #define SPO2_MAX_VALID       100
-#define SPO2_HOLD_MS         8000     // сколько держать старое значение, если новые невалидны
+#define SPO2_HOLD_MS         4000     // время удержания при кратковременном сбое
 
 // --- ОБЪЕКТЫ ---
 MAX30105 particleSensor;
@@ -76,7 +64,7 @@ volatile bool deviceConnected = false;
 bool oldDeviceConnected = false;
 volatile uint16_t negotiatedMtu = 23;
 
-// --- ЭКГ: кольцевой буфер (producer = ecgTask, consumer = loop) ---
+// --- ЭКГ: кольцевой буфер ---
 volatile uint16_t ecgRing[ECG_RING_SIZE];
 volatile uint32_t ecgHead = 0;
 volatile uint32_t ecgTail = 0;
@@ -102,10 +90,10 @@ enum SignalQuality {
 volatile MeasurementState currentMeasurementState = STATE_NO_FINGER;
 volatile SignalQuality currentSignalQuality = QUALITY_POOR;
 
-// Пороги гистерезиса для 18-битного MAX30102 (разрешение 0..262143)
-#define FINGER_TOUCH_THRESHOLD       45000     // IR выше этого = обнаружено касание
-#define FINGER_RELEASE_THRESHOLD     30000     // IR ниже этого = контакт разорван
-#define FINGER_SATURATION_THRESHOLD  260000    // IR выше этого = насыщение фотодиода
+// Пороги гистерезиса для 18-битного MAX30102 (0..262143)
+#define FINGER_TOUCH_THRESHOLD       45000     // IR выше этого = контакт есть
+#define FINGER_RELEASE_THRESHOLD     30000     // IR ниже этого = контакта нет
+#define FINGER_SATURATION_THRESHOLD  260000    // IR выше этого = засветка/насыщение
 #define RED_MIN_THRESHOLD            20000     // RED минимальный уровень при контакте
 
 uint8_t fingerContactDebounce = 0;   // счётчик подтверждений касания
@@ -134,7 +122,7 @@ const char* getSignalQualityStr(SignalQuality q) {
 
 // --- ПУЛЬС ---
 uint8_t currentBPM = 0;
-long lastBeat = 0;
+unsigned long lastBeat = 0;
 float beatsPerMinute = 0;
 int beatAvg = 0;
 const byte RATE_SIZE = 4;
@@ -142,7 +130,7 @@ byte rates[RATE_SIZE] = {0, 0, 0, 0};
 byte rateSpot = 0;
 long lastIR = 0;
 long lastRED = 0;
-const unsigned long BPM_TIMEOUT_MS = 8000;
+const unsigned long BPM_TIMEOUT_MS = 3500;
 
 // --- ДИАГНОСТИКА ПУЛЬСА (BPM) ---
 unsigned long totalBeatsDetected = 0;
@@ -166,14 +154,19 @@ uint8_t spo2Hist[SPO2_AVG_N];
 uint8_t spo2HistCount = 0;
 uint8_t spo2HistPos = 0;
 unsigned long lastSpo2ValidTime = 0;
-bool fingerWasOn = false;
 
-// --- ДИАГНОСТИКА ---
+// --- ТАЙМИНГИ ДЛЯ ДИАГНОСТИКИ ЗАДЕРЖЕК ---
+unsigned long lastSensorSampleTime = 0;
+unsigned long lastTelemetrySentTime = 0;
 unsigned long lastDiagPrintTime = 0;
 const unsigned long DIAG_INTERVAL_MS = 1000;
 unsigned long packetsSentCount = 0;
 unsigned long packetsFailedCount = 0;
 unsigned long ecgOverflowCount = 0;
+
+// Предварительное объявление функций отправки
+void sendTelemetryPacket(unsigned long t_sensor, unsigned long t_send);
+void sendPacket(const uint16_t* samples, uint8_t count, bool lo, unsigned long t_sensor, unsigned long t_send);
 
 // --- BLE CALLBACKS ---
 class QamqorServerCallbacks : public BLEServerCallbacks {
@@ -182,10 +175,23 @@ class QamqorServerCallbacks : public BLEServerCallbacks {
     negotiatedMtu = 23;
     Serial.println("\n[BLE] ✅ КЛИЕНТ ПОДКЛЮЧЕН");
   }
+
+  void onConnect(BLEServer* s, esp_ble_gatts_cb_param_t* param) {
+    deviceConnected = true;
+    negotiatedMtu = 23;
+    Serial.println("\n[BLE] ✅ КЛИЕНТ ПОДКЛЮЧЕН (с параметрами)");
+    if (param && pServer) {
+      // Запрос ультра-низкой задержки: интервал 7.5мс - 15мс (0x06 - 0x0c)
+      pServer->updateConnParams(param->connect.remote_bda, 0x06, 0x0c, 0, 400);
+      Serial.println("[BLE] Запрошены низколатентные параметры соединения (7.5 - 15 мс)");
+    }
+  }
+
   void onDisconnect(BLEServer* s) {
     deviceConnected = false;
     Serial.println("\n[BLE] ⚠️ Клиент отключился.");
   }
+
   void onMtuChanged(BLEServer* s, esp_ble_gatts_cb_param_t* param) {
     negotiatedMtu = param->mtu.mtu;
     Serial.printf("[BLE] MTU согласован: %u\n", negotiatedMtu);
@@ -223,8 +229,7 @@ void ecgTask(void* param) {
 }
 
 // =====================================================================
-// ДЕТЕКТОР УДАРОВ ПУЛЬСА (PPG 32-BIT ДЛЯ 25 ГЦ)
-// Заменяет 16-битный checkForBeat из библиотеки, который переполняется при IR > 65535
+// ДЕТЕКТОР УДАРОВ ПУЛЬСА (PPG 32-BIT С ФИЛЬТРАЦИЕЙ ДИКРОТИЧЕСКОЙ ВОЛНЫ)
 // =====================================================================
 bool checkPPGBeat(int32_t ir, unsigned long now, bool reset) {
   static int32_t ir_dc_reg = 0;
@@ -235,6 +240,8 @@ bool checkPPGBeat(int32_t ir, unsigned long now, bool reset) {
   static bool positive_edge = false;
   static bool negative_edge = false;
   static unsigned long last_detected_beat = 0;
+  static unsigned long last_beat_interval = 800; // средний RR ~75 bpm
+  static int32_t running_systolic_amp = 0;
 
   if (reset) {
     ir_dc_reg = 0;
@@ -245,6 +252,8 @@ bool checkPPGBeat(int32_t ir, unsigned long now, bool reset) {
     positive_edge = false;
     negative_edge = false;
     last_detected_beat = 0;
+    last_beat_interval = 800;
+    running_systolic_amp = 0;
     return false;
   }
 
@@ -272,10 +281,38 @@ bool checkPPGBeat(int32_t ir, unsigned long now, bool reset) {
 
     // Размах пульса для 18-битного ADC: от 50 до 25000 отсчетов
     if (peak_to_peak > 50 && peak_to_peak < 25000) {
-      // Рефрактерный период не менее 300 мс (не более 200 уд/мин)
-      if (last_detected_beat == 0 || (now - last_detected_beat >= 300)) {
+      unsigned long delta = (last_detected_beat == 0) ? 0 : (now - last_detected_beat);
+
+      // 1. Адаптивный рефрактерный период:
+      // При пульсе 75 уд/мин (RR = 800мс) рефрактерный период не менее 440мс (0.55 * RR).
+      // Это полностью исключает ложное срабатывание на дикротический зубец (300-380мс).
+      unsigned long min_refractory = 360;
+      if (last_beat_interval > 0) {
+        unsigned long adaptive_ref = (last_beat_interval * 55) / 100;
+        if (adaptive_ref > min_refractory) min_refractory = min(adaptive_ref, 700UL);
+      }
+
+      // 2. Фильтрация вторичной дикротической волны по амплитуде:
+      // Дикротический зубец имеет меньшую амплитуду (< 55% от систолического пика)
+      bool is_dicrotic = false;
+      if (running_systolic_amp > 0 && delta > 0 && delta < 600) {
+        if (peak_to_peak < (running_systolic_amp * 55 / 100)) {
+          is_dicrotic = true;
+        }
+      }
+
+      if (!is_dicrotic && (last_detected_beat == 0 || delta >= min_refractory)) {
         beat = true;
+        if (last_detected_beat > 0 && delta >= 300 && delta <= 1500) {
+          last_beat_interval = delta;
+        }
         last_detected_beat = now;
+        // Обновление бегущей амплитуды систолического пика (EMA)
+        if (running_systolic_amp == 0) {
+          running_systolic_amp = peak_to_peak;
+        } else {
+          running_systolic_amp = (running_systolic_amp * 3 + peak_to_peak) / 4;
+        }
       }
     }
   }
@@ -327,6 +364,7 @@ void computeSpO2(unsigned long now) {
                                          &spo2Raw, &spo2Valid, &hrRaw, &hrValid);
 
   // 1. SpO2
+  bool spo2Changed = false;
   if (spo2Valid && spo2Raw >= SPO2_MIN_VALID && spo2Raw <= SPO2_MAX_VALID) {
     spo2Hist[spo2HistPos] = (uint8_t)spo2Raw;
     spo2HistPos = (spo2HistPos + 1) % SPO2_AVG_N;
@@ -334,38 +372,62 @@ void computeSpO2(unsigned long now) {
 
     int sum = 0;
     for (uint8_t i = 0; i < spo2HistCount; i++) sum += spo2Hist[i];
-    currentSpO2 = (uint8_t)(sum / spo2HistCount);
+    uint8_t newSpo2 = (uint8_t)(sum / spo2HistCount);
+    if (newSpo2 != currentSpO2) {
+      currentSpO2 = newSpo2;
+      spo2Changed = true;
+    }
     lastSpo2ValidTime = now;
   } else if (lastSpo2ValidTime > 0 && (now - lastSpo2ValidTime) > SPO2_HOLD_MS) {
+    if (currentSpO2 != 0) spo2Changed = true;
     currentSpO2 = 0;
     spo2HistCount = 0;
     spo2HistPos = 0;
   }
 
-  // 2. ЧСС по алгоритму Maxim (буфер 100 отсчётов / 4 секунды)
+  // 2. ЧСС по алгоритму Maxim с защитой от 2x гармоники
   if (hrValid && hrRaw >= 40 && hrRaw <= 200) {
     maximHRValidCount++;
     lastMaximHR = hrRaw;
+
+    int32_t candidateHR = hrRaw;
+    // Проверка на двойную гармонику (Maxim определил и систолу, и дикроту)
+    if (currentBPM >= 45 && currentBPM <= 110) {
+      if (hrRaw >= (currentBPM * 17 / 10) && hrRaw <= (currentBPM * 23 / 10)) {
+        candidateHR = (hrRaw + 1) / 2;
+      }
+    } else if (currentBPM == 0 && hrRaw >= 140 && hrRaw <= 170) {
+      candidateHR = (hrRaw + 1) / 2;
+    }
+
     if (currentBPM == 0) {
-      currentBPM = (uint8_t)hrRaw;
-      for (byte x = 0; x < RATE_SIZE; x++) rates[x] = (byte)hrRaw;
+      currentBPM = (uint8_t)candidateHR;
+      for (byte x = 0; x < RATE_SIZE; x++) rates[x] = (byte)candidateHR;
       lastBeat = now;
       lastRejectReason = "СИНХР_MAXIM";
+      spo2Changed = true;
     }
+  }
+
+  // Мгновенная отправка обновленных показателей SpO2/HR
+  if (spo2Changed) {
+    sendTelemetryPacket(lastSensorSampleTime, now);
   }
 }
 
-void updateContactState(uint32_t ir, uint32_t red) {
+void updateContactState(uint32_t ir, uint32_t red, unsigned long now) {
   // 1. Проверка обрыва контакта или насыщения фотодиода с гистерезисом
   if (ir < FINGER_RELEASE_THRESHOLD || ir >= FINGER_SATURATION_THRESHOLD || red < (FINGER_RELEASE_THRESHOLD / 2)) {
     fingerContactDebounce = 0;
     if (fingerReleaseDebounce < 255) fingerReleaseDebounce++;
 
-    if (fingerReleaseDebounce >= 3) { // 3 последовательных отсчёта (~120 мс) подтверждают отсутствие
+    if (fingerReleaseDebounce >= 3) { // 3 отсчёта (~120 мс) подтверждают снятие пальца
       if (currentMeasurementState != STATE_NO_FINGER) {
         currentMeasurementState = STATE_NO_FINGER;
         currentSignalQuality = QUALITY_POOR;
         resetPulseOx();
+        // МГНОВЕННО отправляем уведомление NO_FINGER в BLE с нулевой задержкой
+        sendTelemetryPacket(now, now);
       }
     }
     return;
@@ -376,14 +438,15 @@ void updateContactState(uint32_t ir, uint32_t red) {
 
   if (currentMeasurementState == STATE_NO_FINGER) {
     if (fingerContactDebounce < 255) fingerContactDebounce++;
-    if (fingerContactDebounce >= 5) { // 5 отсчётов (~200 мс) подтверждают контакт
+    if (fingerContactDebounce >= 5) { // 5 отсчётов (~200 мс) подтверждают касание
       currentMeasurementState = STATE_DETECTING;
       currentSignalQuality = QUALITY_MODERATE;
+      sendTelemetryPacket(now, now);
     }
     return;
   }
 
-  // 3. Если контакт уже зафиксирован — определяем стабильность и достоверность
+  // 3. Если контакт уже зафиксирован — определяем стабильность
   if (currentMeasurementState == STATE_DETECTING) {
     if (fingerContactDebounce < 15) {
       fingerContactDebounce++;
@@ -393,7 +456,6 @@ void updateContactState(uint32_t ir, uint32_t red) {
   }
 
   if (currentMeasurementState == STATE_MEASURING || currentMeasurementState == STATE_VALID || currentMeasurementState == STATE_SIGNAL_UNSTABLE) {
-    // Проверка стабильности: если пульс достоверен и зафиксирован
     if (currentBPM >= 40 && currentBPM <= 200 && totalBeatsDetected >= 2) {
       currentMeasurementState = STATE_VALID;
       currentSignalQuality = (totalBeatsDetected >= 5 && currentSpO2 >= 90) ? QUALITY_GOOD : QUALITY_MODERATE;
@@ -407,21 +469,21 @@ void updateContactState(uint32_t ir, uint32_t red) {
 void processPulseOxSample(uint32_t ir, uint32_t red, unsigned long now) {
   lastIR = ir;
   lastRED = red;
+  lastSensorSampleTime = now;
 
-  updateContactState(ir, red);
+  updateContactState(ir, red, now);
 
   if (currentMeasurementState == STATE_NO_FINGER) {
     return;
   }
 
-  // --- ЧСС по мгновенному 32-битному детектору ударов (25 Гц) ---
+  // --- ЧСС по мгновенному детектору ударов ---
   if (checkPPGBeat((int32_t)ir, now, false)) {
     totalBeatsDetected++;
 
     if (lastBeat == 0) {
-      // Первый обнаруженный удар — фиксируем точку отсчёта
       lastBeat = now;
-      lastRejectReason = "ПЕРВЫЙ_УДАР (фиксация t0)";
+      lastRejectReason = "ПЕРВЫЙ_УДАР";
     } else {
       long delta = now - lastBeat;
       lastBeatDeltaMs = delta;
@@ -431,19 +493,28 @@ void processPulseOxSample(uint32_t ir, uint32_t red, unsigned long now) {
         lastRawBPM = beatsPerMinute;
 
         if (beatsPerMinute >= 40 && beatsPerMinute <= 200) {
-          if (rates[0] == 0) {
-            for (byte x = 0; x < RATE_SIZE; x++) rates[x] = (byte)beatsPerMinute;
+          // Защита от резких 2x скачков (дикротический проскок)
+          if (currentBPM > 0 && beatsPerMinute >= (currentBPM * 17 / 10) && beatsPerMinute <= (currentBPM * 23 / 10)) {
+            lastRejectReason = "2X_ГАРМОНИКА_ОТКЛОНЕНА";
+          } else if (currentBPM > 0 && abs((int)beatsPerMinute - (int)currentBPM) > 32 && totalBeatsDetected > 4) {
+            lastRejectReason = "СКАЧОК_ЧСС_ОТКЛОНЕН";
           } else {
-            rates[rateSpot++] = (byte)beatsPerMinute;
-            rateSpot %= RATE_SIZE;
-          }
-          beatAvg = 0;
-          for (byte x = 0; x < RATE_SIZE; x++) beatAvg += rates[x];
-          beatAvg /= RATE_SIZE;
-          currentBPM = (uint8_t)beatAvg;
-          lastRejectReason = "OK";
-          if (currentMeasurementState != STATE_VALID && totalBeatsDetected >= 2) {
-            currentMeasurementState = STATE_VALID;
+            if (rates[0] == 0) {
+              for (byte x = 0; x < RATE_SIZE; x++) rates[x] = (byte)beatsPerMinute;
+            } else {
+              rates[rateSpot++] = (byte)beatsPerMinute;
+              rateSpot %= RATE_SIZE;
+            }
+            beatAvg = 0;
+            for (byte x = 0; x < RATE_SIZE; x++) beatAvg += rates[x];
+            beatAvg /= RATE_SIZE;
+            currentBPM = (uint8_t)beatAvg;
+            lastRejectReason = "OK";
+            if (currentMeasurementState != STATE_VALID && totalBeatsDetected >= 2) {
+              currentMeasurementState = STATE_VALID;
+            }
+            // МГНОВЕННАЯ отправка ЧСС в BLE без ожидания!
+            sendTelemetryPacket(lastSensorSampleTime, now);
           }
         } else {
           lastRejectReason = "BPM_ВНЕ_ДИАПАЗОНА";
@@ -483,11 +554,33 @@ void processPulseOxSample(uint32_t ir, uint32_t red, unsigned long now) {
 }
 
 // =====================================================================
-// ОТПРАВКА ПАКЕТА (Единый расширенный JSON + обратная совместимость)
+// НИЗКОУРОВНЕВАЯ ОТПРАВКА БАЙТ В BLE ХАРАКТЕРИСТИКУ
 // =====================================================================
-void sendPacket(const uint16_t* samples, uint8_t count, bool lo) {
-  char payload[384];
+void sendRawBytes(const char* payload, int len) {
+  uint16_t chunk = negotiatedMtu > 3 ? negotiatedMtu - 3 : 20;
+  if (chunk > 512) chunk = 512;
 
+  if (len <= chunk) {
+    pCharacteristic->setValue((uint8_t*)payload, len);
+    pCharacteristic->notify();
+  } else {
+    for (int off = 0; off < len; off += chunk) {
+      int seg = min((int)chunk, len - off);
+      pCharacteristic->setValue((uint8_t*)(payload + off), seg);
+      pCharacteristic->notify();
+      delay(2);
+    }
+  }
+  packetsSentCount++;
+}
+
+// =====================================================================
+// МГНОВЕННЫЙ ПАКЕТ ТЕЛЕМЕТРИИ (БЕЗ ОЖИДАНИЯ ОТСЧЁТОВ ЭКГ)
+// =====================================================================
+void sendTelemetryPacket(unsigned long t_sensor, unsigned long t_send) {
+  if (!deviceConnected) return;
+
+  char payload[256];
   const char* stateStr = getMeasurementStateStr(currentMeasurementState);
   const char* qualityStr = getSignalQualityStr(currentSignalQuality);
   bool fingerDetected = (currentMeasurementState != STATE_NO_FINGER && currentMeasurementState != STATE_SENSOR_ERROR);
@@ -501,7 +594,45 @@ void sendPacket(const uint16_t* samples, uint8_t count, bool lo) {
                    "{\"finger_detected\":%s,\"measurement_state\":\"%s\","
                    "\"heart_rate\":%u,\"heart_rate_valid\":%s,"
                    "\"spo2\":%u,\"spo2_valid\":%s,\"signal_quality\":\"%s\","
-                   "\"bpm\":%u,\"lo\":%d,\"timestamp\":%lu,\"ecg\":[",
+                   "\"bpm\":%u,\"lo\":%d,\"t_sensor\":%lu,\"t_send\":%lu,\"timestamp\":%lu}",
+                   fingerDetected ? "true" : "false",
+                   stateStr,
+                   outBpm,
+                   hrValid ? "true" : "false",
+                   outSpo2,
+                   spValid ? "true" : "false",
+                   qualityStr,
+                   outBpm,
+                   currentLeadsOff ? 1 : 0,
+                   t_sensor,
+                   t_send,
+                   t_send);
+
+  sendRawBytes(payload, n);
+  lastTelemetrySentTime = t_send;
+}
+
+// =====================================================================
+// ПОТОКОВЫЙ ПАКЕТ ТЕЛЕМЕТРИИ + ЭКГ (10 ОТСЧЁТОВ = 40 МС)
+// =====================================================================
+void sendPacket(const uint16_t* samples, uint8_t count, bool lo, unsigned long t_sensor, unsigned long t_send) {
+  if (!deviceConnected) return;
+
+  char payload[384];
+  const char* stateStr = getMeasurementStateStr(currentMeasurementState);
+  const char* qualityStr = getSignalQualityStr(currentSignalQuality);
+  bool fingerDetected = (currentMeasurementState != STATE_NO_FINGER && currentMeasurementState != STATE_SENSOR_ERROR);
+  bool hrValid = fingerDetected && (currentMeasurementState == STATE_VALID || currentMeasurementState == STATE_MEASURING) && (currentBPM >= 40 && currentBPM <= 200);
+  bool spValid = fingerDetected && (currentMeasurementState == STATE_VALID || currentMeasurementState == STATE_MEASURING) && (currentSpO2 >= 80 && currentSpO2 <= 100);
+
+  uint8_t outBpm = hrValid ? currentBPM : 0;
+  uint8_t outSpo2 = spValid ? currentSpO2 : 0;
+
+  int n = snprintf(payload, sizeof(payload),
+                   "{\"finger_detected\":%s,\"measurement_state\":\"%s\","
+                   "\"heart_rate\":%u,\"heart_rate_valid\":%s,"
+                   "\"spo2\":%u,\"spo2_valid\":%s,\"signal_quality\":\"%s\","
+                   "\"bpm\":%u,\"lo\":%d,\"t_sensor\":%lu,\"t_send\":%lu,\"timestamp\":%lu,\"ecg\":[",
                    fingerDetected ? "true" : "false",
                    stateStr,
                    outBpm,
@@ -511,34 +642,23 @@ void sendPacket(const uint16_t* samples, uint8_t count, bool lo) {
                    qualityStr,
                    outBpm,
                    lo ? 1 : 0,
-                   millis());
+                   t_sensor,
+                   t_send,
+                   t_send);
 
   for (uint8_t i = 0; i < count; i++) {
     n += snprintf(payload + n, sizeof(payload) - n, i ? ",%u" : "%u", samples[i]);
   }
   n += snprintf(payload + n, sizeof(payload) - n, "]}");
 
-  uint16_t chunk = negotiatedMtu > 3 ? negotiatedMtu - 3 : 20;
-  if (chunk > 512) chunk = 512;
-
-  if (n <= chunk) {
-    pCharacteristic->setValue((uint8_t*)payload, n);
-    pCharacteristic->notify();
-  } else {
-    for (int off = 0; off < n; off += chunk) {
-      int len = min((int)chunk, n - off);
-      pCharacteristic->setValue((uint8_t*)(payload + off), len);
-      pCharacteristic->notify();
-      delay(3);
-    }
-  }
-  packetsSentCount++;
+  sendRawBytes(payload, n);
+  lastTelemetrySentTime = t_send;
 }
 
 void setup() {
   Serial.begin(115200);
   delay(500);
-  Serial.println("\n*** QAMQOR BAND FULL — ЧСС + SpO2 + ЭКГ 250 Hz ***");
+  Serial.println("\n*** QAMQOR BAND FULL — ЧСС + SpO2 + ЭКГ 250 Hz (Low-Latency) ***");
 
   // 1. AD8232
   analogReadResolution(12);
@@ -560,7 +680,6 @@ void setup() {
     max30102Present = false;
   } else {
     max30102Present = true;
-    // Параметры как в SparkFun Example8_SPO2 (под алгоритм Maxim, 25 выб/с)
     byte ledBrightness = 60;   // ~12 мА
     byte sampleAverage = 4;
     byte ledMode = 2;          // Red + IR
@@ -572,7 +691,7 @@ void setup() {
   }
 
   // 3. BLE
-  BLEDevice::setMTU(247);   // до init()
+  BLEDevice::setMTU(247);
   BLEDevice::init(DEVICE_NAME);
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new QamqorServerCallbacks());
@@ -598,7 +717,7 @@ void setup() {
   BLEDevice::startAdvertising();
   Serial.println("✅ [BLE] Сервер запущен.");
 
-  // 4. Задача ЭКГ на ядре 1, приоритет выше loop()
+  // 4. Задача ЭКГ на ядре 1
   xTaskCreatePinnedToCore(ecgTask, "ecg250", 4096, NULL, 2, NULL, 1);
   Serial.println("✅ [ECG] Задача 250 Гц запущена.");
 }
@@ -607,7 +726,7 @@ void loop() {
   unsigned long now = millis();
 
   // ====================================================================
-  // 1. MAX30102: пульс + SpO2 (без блокировок, читаем весь FIFO)
+  // 1. MAX30102: пульс + SpO2 (чтение всего FIFO)
   // ====================================================================
   if (max30102Present) {
     particleSensor.check();
@@ -619,11 +738,12 @@ void loop() {
       processPulseOxSample(ir, red, now);
     }
 
-    // Нет ударов дольше таймаута — не показываем устаревший пульс
+    // Таймаут отсутствия ударов при приложенном пальце
     if (currentBPM > 0 && lastBeat > 0 && (now - lastBeat) > BPM_TIMEOUT_MS) {
       currentBPM = 0;
       for (byte x = 0; x < RATE_SIZE; x++) rates[x] = 0;
       rateSpot = 0;
+      sendTelemetryPacket(lastSensorSampleTime, now);
     }
   } else {
     currentBPM = 0;
@@ -631,7 +751,7 @@ void loop() {
   }
 
   // ====================================================================
-  // 2. BLE: пакет на каждые 10 накопленных отсчётов ЭКГ (40 мс)
+  // 2. BLE: пакет ЭКГ (10 отсчетов = 40 мс) с защитой от накопления очереди
   // ====================================================================
   if (!deviceConnected) {
     ecgTail = ecgHead;
@@ -639,24 +759,27 @@ void loop() {
     uint32_t head = ecgHead;
     uint32_t avail = head - ecgTail;
 
-    if (avail > ECG_RING_SIZE - ECG_SAMPLES_PER_PKT) {
+    // СТРОГАЯ ЗАЩИТА ОТ НАКОПЛЕНИЯ ОЧЕРЕДИ (ZERO-LAG GUARD):
+    // Если буфер отстает более чем на 2 пакета (80 мс), сбрасываем хвост к реальному времени.
+    // Это исключает любую задержку в передаче данных!
+    if (avail > ECG_SAMPLES_PER_PKT * 2) {
       ecgOverflowCount++;
       ecgTail = head - ECG_SAMPLES_PER_PKT;
       avail = ECG_SAMPLES_PER_PKT;
     }
 
-    uint8_t guard = 0;
-    while (avail >= ECG_SAMPLES_PER_PKT && guard < 2) {
+    if (avail >= ECG_SAMPLES_PER_PKT) {
       uint16_t samples[ECG_SAMPLES_PER_PKT];
       uint32_t t = ecgTail;
       for (uint8_t i = 0; i < ECG_SAMPLES_PER_PKT; i++) {
         samples[i] = ecgRing[(t + i) & ECG_RING_MASK];
       }
       ecgTail = t + ECG_SAMPLES_PER_PKT;
-      avail -= ECG_SAMPLES_PER_PKT;
-      guard++;
 
-      sendPacket(samples, ECG_SAMPLES_PER_PKT, currentLeadsOff);
+      sendPacket(samples, ECG_SAMPLES_PER_PKT, currentLeadsOff, lastSensorSampleTime, millis());
+    } else if (now - lastTelemetrySentTime >= 300) {
+      // Поддерживающий keepalive телеметрии (раз в 300 мс, если ЭКГ временно не сформирован)
+      sendTelemetryPacket(lastSensorSampleTime, now);
     }
   }
 

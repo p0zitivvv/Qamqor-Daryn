@@ -346,3 +346,27 @@ test('17. MTU ФРАГМЕНТАЦИЯ РЕАЛЬНОГО ПАКЕТА: скле
   assert.equal(received.ecgSamples.length, 10);
   assert.deepEqual(received.ecgSamples, [2048, 2051, 2049, 2055, 2048, 2050, 2052, 2047, 2053, 2051]);
 });
+
+test('18. ДИАГНОСТИКА ЗАДЕРЖКИ И МГНОВЕННЫЙ СБРОС: проверка меток t_sensor, t_send, t_recv и статуса no_finger', () => {
+  const ble = new BLEService();
+  let received = null;
+  ble.onTelemetry = (t) => { received = t; };
+
+  const t0 = 1234500;
+  const t1 = 1234520;
+  ble.handlePacket(`{"finger_detected":true,"measurement_state":"VALID","heart_rate":75,"spo2":98,"bpm":75,"lo":0,"t_sensor":${t0},"t_send":${t1}}`);
+
+  assert.ok(received);
+  assert.equal(received.bpm, 75);
+  assert.equal(received.spo2, 98);
+  assert.equal(received.t_sensor, t0);
+  assert.equal(received.t_send, t1);
+  assert.ok(received.t_recv >= t1, 't_recv должен быть не меньше t_send');
+
+  // Немедленный пакет снятия пальца (NO_FINGER)
+  ble.handlePacket(`{"finger_detected":false,"measurement_state":"NO_FINGER","bpm":0,"spo2":0,"lo":0,"t_sensor":${t1 + 50},"t_send":${t1 + 50}}`);
+  assert.equal(received.bpm, null, 'ЧСС сразу сброшена в null');
+  assert.equal(received.spo2, null, 'SpO2 сразу сброшена в null');
+  assert.equal(received.pulseSensorStatus, 'no_finger');
+  assert.equal(received.hasActivePulse, false);
+});
